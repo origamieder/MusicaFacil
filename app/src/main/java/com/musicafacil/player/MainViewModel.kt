@@ -9,6 +9,7 @@ import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
@@ -54,9 +55,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var repeatMode by mutableIntStateOf(Player.REPEAT_MODE_OFF)
         private set
+    /** Cambia cada vez que la cola cambia, para que la UI la vuelva a leer. */
+    var queueVersion by mutableIntStateOf(0)
+        private set
 
     private val listener = object : Player.Listener {
-        override fun onEvents(player: Player, events: Player.Events) = sync(player)
+        override fun onEvents(player: Player, events: Player.Events) {
+            sync(player)
+            if (events.containsAny(
+                    Player.EVENT_TIMELINE_CHANGED,
+                    Player.EVENT_MEDIA_ITEM_TRANSITION,
+                    Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED,
+                )
+            ) queueVersion++
+        }
     }
 
     private val controllerFuture = MediaController.Builder(
@@ -154,6 +166,32 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             else -> Player.REPEAT_MODE_OFF
         }
     }
+
+    // --- Cola ---
+
+    data class QueueEntry(val index: Int, val item: MediaItem)
+
+    /** Canciones que vienen después de la actual, en el orden en que sonarán. */
+    fun upcoming(): List<QueueEntry> {
+        val c = controller ?: return emptyList()
+        val timeline = c.currentTimeline
+        if (timeline.isEmpty) return emptyList()
+        val out = ArrayList<QueueEntry>()
+        var i = timeline.getNextWindowIndex(c.currentMediaItemIndex, Player.REPEAT_MODE_OFF, c.shuffleModeEnabled)
+        while (i != C.INDEX_UNSET) {
+            out += QueueEntry(i, c.getMediaItemAt(i))
+            i = timeline.getNextWindowIndex(i, Player.REPEAT_MODE_OFF, c.shuffleModeEnabled)
+        }
+        return out
+    }
+
+    fun playQueueItem(index: Int) {
+        controller?.run { seekToDefaultPosition(index); play() }
+    }
+
+    fun removeFromQueue(index: Int) = controller?.removeMediaItem(index)
+
+    fun moveInQueue(from: Int, to: Int) = controller?.moveMediaItem(from, to)
 
     // --- Playlists ---
 

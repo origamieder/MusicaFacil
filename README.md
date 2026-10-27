@@ -8,6 +8,7 @@ Reproductor de música para Android, minimalista en blanco y negro. Pensado para
 - **Artistas**: lista de artistas (usa la etiqueta *Album Artist* si existe); cada uno con sus álbumes y botones de reproducir/aleatorio.
 - **Canciones**: lista de todas las canciones por orden alfabético.
 - **Favoritas**: toca ♡ en el reproductor o "Añadir a favoritas" en el menú ⋮ de cualquier canción.
+- **Cola**: en el reproductor, el icono de arriba a la derecha muestra lo que va a sonar. Puedes saltar a una canción, quitarla o reordenarla arrastrando (con aleatorio desactivado).
 - **Playlists**: crea las tuyas, añade canciones o álbumes enteros desde el menú ⋮, y reordénalas arrastrando ≡. Se pueden renombrar y borrar.
 - **Buscador**: filtra por álbum, artista o canción.
 - **Gapless**: la siguiente canción se carga y decodifica mientras suena la actual, así que no hay silencio entre pistas (ideal para discos en directo o conceptuales). En MP3 se quita el relleno del codificador (LAME/iTunes); FLAC no lleva relleno.

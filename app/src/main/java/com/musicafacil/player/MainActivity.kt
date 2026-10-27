@@ -139,9 +139,11 @@ private fun App(vm: MainViewModel = viewModel()) {
     var openAlbumId by rememberSaveable { mutableStateOf<Long?>(null) }
     var openPlaylistId by rememberSaveable { mutableStateOf<Long?>(null) }
     var showPlayer by rememberSaveable { mutableStateOf(false) }
+    var showQueue by rememberSaveable { mutableStateOf(false) }
 
-    BackHandler(enabled = showPlayer || openAlbumId != null || openPlaylistId != null || openArtist != null) {
+    BackHandler(enabled = showQueue || showPlayer || openAlbumId != null || openPlaylistId != null || openArtist != null) {
         when {
+            showQueue -> showQueue = false
             showPlayer -> showPlayer = false
             openAlbumId != null -> openAlbumId = null
             openPlaylistId != null -> openPlaylistId = null
@@ -153,12 +155,12 @@ private fun App(vm: MainViewModel = viewModel()) {
         AddToPlaylistDialog(vm, ids) { vm.addToPlaylistRequest = null }
     }
 
-    val goArtist: (String) -> Unit = { openArtist = it; openAlbumId = null; showPlayer = false }
+    val goArtist: (String) -> Unit = { openArtist = it; openAlbumId = null; showPlayer = false; showQueue = false }
 
     Scaffold(
         containerColor = Black,
         bottomBar = {
-            if (!showPlayer && vm.currentItem != null) MiniPlayer(vm) { showPlayer = true }
+            if (!showPlayer && !showQueue && vm.currentItem != null) MiniPlayer(vm) { showPlayer = true }
         },
     ) { padding ->
         Box(Modifier.padding(padding).fillMaxSize()) {
@@ -166,7 +168,8 @@ private fun App(vm: MainViewModel = viewModel()) {
             val artist = openArtist?.let { vm.artist(it) }
             val playlist = openPlaylistId?.let { vm.playlist(it) }
             when {
-                showPlayer -> PlayerScreen(vm, onArtist = goArtist) { showPlayer = false }
+                showQueue -> QueueScreen(vm) { showQueue = false }
+                showPlayer -> PlayerScreen(vm, onArtist = goArtist, onQueue = { showQueue = true }) { showPlayer = false }
                 album != null -> AlbumScreen(vm, album, onArtist = goArtist) { openAlbumId = null }
                 playlist != null -> PlaylistScreen(vm, playlist) { openPlaylistId = null }
                 artist != null -> ArtistScreen(vm, artist, onAlbum = { openAlbumId = it.id }) { openArtist = null }
@@ -826,7 +829,12 @@ private fun MiniPlayer(vm: MainViewModel, onOpen: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PlayerScreen(vm: MainViewModel, onArtist: (String) -> Unit, onClose: () -> Unit) {
+private fun PlayerScreen(
+    vm: MainViewModel,
+    onArtist: (String) -> Unit,
+    onQueue: () -> Unit,
+    onClose: () -> Unit,
+) {
     val controller = vm.controller
     val meta = vm.currentItem?.mediaMetadata
     val (position, duration) = rememberProgress(vm)
@@ -840,7 +848,9 @@ private fun PlayerScreen(vm: MainViewModel, onArtist: (String) -> Unit, onClose:
             Spacer(Modifier.weight(1f))
             Text("REPRODUCIENDO", fontSize = 11.sp, letterSpacing = 2.sp, color = Gray, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.weight(1f))
-            Spacer(Modifier.width(36.dp))
+            IconButton(onClick = onQueue, Modifier.offset(x = 12.dp)) {
+                Icon(Icons.AutoMirrored.Filled.QueueMusic, "Ver cola", Modifier.size(26.dp))
+            }
         }
         Spacer(Modifier.weight(1f))
         AlbumArt(
@@ -950,6 +960,96 @@ private fun PlayerScreen(vm: MainViewModel, onArtist: (String) -> Unit, onClose:
         }
         Spacer(Modifier.weight(0.6f))
     }
+}
+
+// ---------------------------------------------------------------- Cola
+
+@Composable
+private fun QueueScreen(vm: MainViewModel, onClose: () -> Unit) {
+    val meta = vm.currentItem?.mediaMetadata
+    val controller = vm.controller
+    var entries by remember { mutableStateOf(emptyList<MainViewModel.QueueEntry>()) }
+    LaunchedEffect(vm.queueVersion, controller) { entries = vm.upcoming() }
+
+    // Solo se puede reordenar sin aleatorio: con aleatorio el orden lo decide el reproductor
+    val canReorder = !vm.shuffle
+    val listState = rememberLazyListState()
+    val reorder = rememberReorderableLazyListState(listState) { from, to ->
+        val fi = entries.indexOfFirst { it.item.mediaId == from.key }
+        val ti = entries.indexOfFirst { it.item.mediaId == to.key }
+        if (fi >= 0 && ti >= 0 && canReorder) {
+            val first = entries.first().index
+            vm.moveInQueue(entries[fi].index, entries[ti].index)
+            entries = entries.toMutableList().apply { add(ti, removeAt(fi)) }
+                .mapIndexed { pos, e -> e.copy(index = first + pos) }
+        }
+    }
+
+    LazyColumn(state = listState, contentPadding = PaddingValues(20.dp)) {
+        item(key = "header") {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onClose, Modifier.offset(x = (-12).dp)) {
+                    Icon(Icons.Filled.KeyboardArrowDown, "Cerrar", Modifier.size(32.dp))
+                }
+                Text("Cola", style = MaterialTheme.typography.headlineSmall)
+            }
+            Spacer(Modifier.height(16.dp))
+            SectionLabel("SONANDO AHORA")
+            if (meta != null) {
+                Row(Modifier.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    AlbumArt(meta.extras?.getLong(EXTRA_ALBUM_ID), Modifier.size(52.dp), sizePx = 150, shape = RoundedCornerShape(4.dp))
+                    Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(meta.title?.toString() ?: "", fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(meta.artist?.toString() ?: "", fontSize = 13.sp, color = Gray, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    Icon(Icons.Filled.GraphicEq, null, Modifier.size(20.dp), tint = White)
+                }
+            }
+            Spacer(Modifier.height(20.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                SectionLabel("A CONTINUACIÓN · ${entries.size}")
+                Spacer(Modifier.weight(1f))
+                if (vm.shuffle) Text("Aleatorio activado", fontSize = 12.sp, color = DarkGray)
+            }
+            if (entries.isEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Text("No hay más canciones en la cola.", color = Gray)
+            }
+            Spacer(Modifier.height(4.dp))
+        }
+        items(entries, key = { it.item.mediaId }) { entry ->
+            ReorderableItem(reorder, key = entry.item.mediaId, enabled = canReorder) { dragging ->
+                val m = entry.item.mediaMetadata
+                SongRow(
+                    leading = {
+                        AlbumArt(m.extras?.getLong(EXTRA_ALBUM_ID), Modifier.size(44.dp), sizePx = 150, shape = RoundedCornerShape(4.dp))
+                    },
+                    title = m.title?.toString() ?: "",
+                    subtitle = m.artist?.toString(),
+                    playing = false,
+                    onClick = { vm.playQueueItem(entry.index) },
+                    modifier = Modifier.background(if (dragging) Card else Black, RoundedCornerShape(8.dp)),
+                ) {
+                    IconButton(onClick = { vm.removeFromQueue(entry.index) }, Modifier.size(40.dp)) {
+                        Icon(Icons.Filled.Close, "Quitar de la cola", Modifier.size(18.dp), tint = Gray)
+                    }
+                    if (canReorder) {
+                        Icon(
+                            Icons.Filled.DragHandle, "Mover",
+                            Modifier.draggableHandle().size(40.dp).padding(8.dp),
+                            tint = Gray,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SectionLabel(text: String) {
+    Text(text, fontSize = 11.sp, letterSpacing = 1.5.sp, color = Gray, fontWeight = FontWeight.SemiBold)
 }
 
 // ---------------------------------------------------------------- Componentes
