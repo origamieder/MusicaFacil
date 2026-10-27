@@ -32,6 +32,7 @@ Requiere Android 8.1 o superior.
 Abre la carpeta con Android Studio, espera a que sincronice y pulsa ▶ con el móvil conectado.
 
 ## Dónde poner la música
+Por defecto se lee todo el móvil. Con el icono de carpeta de la pantalla principal puedes elegir una o varias carpetas concretas (se incluyen sus subcarpetas).
 Cualquier carpeta del almacenamiento del móvil o de la tarjeta SD (por ejemplo `Music/`). La app usa el índice de música de Android; si acabas de copiar archivos y no aparecen, pulsa ⟳ en la pantalla principal.
 Las carátulas salen de la imagen incrustada en los archivos (o de `cover.jpg` / `folder.jpg` en la carpeta del álbum).
 

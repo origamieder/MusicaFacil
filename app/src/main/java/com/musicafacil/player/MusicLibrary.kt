@@ -70,7 +70,8 @@ const val EXTRA_ALBUM_ID = "album_id"
 object MusicLibrary {
 
     /** Lee todas las canciones (FLAC, MP3, etc.) que Android tiene indexadas. */
-    fun loadSongs(context: Context): List<Song> {
+    /** @param folders si no está vacío, solo canciones dentro de esas carpetas */
+    fun loadSongs(context: Context, folders: List<String> = emptyList()): List<Song> {
         val projection = arrayOf(
             MediaStore.Audio.Media._ID,
             MediaStore.Audio.Media.TITLE,
@@ -79,6 +80,8 @@ object MusicLibrary {
             MediaStore.Audio.Media.ALBUM_ID,
             MediaStore.Audio.Media.TRACK,
             MediaStore.Audio.Media.DURATION,
+            // Ruta del archivo, para filtrar por carpeta (obsoleta pero se sigue rellenando)
+            MediaStore.Audio.Media.DATA,
         ) + if (Build.VERSION.SDK_INT >= 30) arrayOf(MediaStore.Audio.Media.ALBUM_ARTIST) else emptyArray()
         val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0"
         val songs = ArrayList<Song>()
@@ -91,7 +94,9 @@ object MusicLibrary {
             val trackCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.TRACK)
             val durCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
             val albumArtistCol = c.getColumnIndex(MediaStore.Audio.Media.ALBUM_ARTIST)
+            val dataCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA)
             while (c.moveToNext()) {
+                if (!isInFolders(c.getString(dataCol), folders)) continue
                 val artist = c.getString(artistCol)
                     ?.takeIf { it.isNotBlank() && it != MediaStore.UNKNOWN_STRING }
                     ?: "Artista desconocido"

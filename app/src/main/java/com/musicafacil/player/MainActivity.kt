@@ -150,9 +150,11 @@ private fun App(vm: MainViewModel = viewModel()) {
     var openPlaylistId by rememberSaveable { mutableStateOf<Long?>(null) }
     var showPlayer by rememberSaveable { mutableStateOf(false) }
     var showQueue by rememberSaveable { mutableStateOf(false) }
+    var showFolders by rememberSaveable { mutableStateOf(false) }
 
-    BackHandler(enabled = showQueue || showPlayer || openAlbumId != null || openPlaylistId != null || openArtist != null) {
+    BackHandler(enabled = showFolders || showQueue || showPlayer || openAlbumId != null || openPlaylistId != null || openArtist != null) {
         when {
+            showFolders -> showFolders = false
             showQueue -> showQueue = false
             showPlayer -> showPlayer = false
             openAlbumId != null -> openAlbumId = null
@@ -181,6 +183,7 @@ private fun App(vm: MainViewModel = viewModel()) {
             val artist = openArtist?.let { vm.artist(it) }
             val playlist = openPlaylistId?.let { vm.playlist(it) }
             when {
+                showFolders -> FoldersScreen(vm) { showFolders = false }
                 showQueue -> QueueScreen(vm) { showQueue = false }
                 showPlayer -> PlayerScreen(
                     vm,
@@ -201,6 +204,7 @@ private fun App(vm: MainViewModel = viewModel()) {
                     onAlbum = { openAlbumId = it.id },
                     onArtist = goArtist,
                     onPlaylist = { openPlaylistId = it },
+                    onFolders = { showFolders = true },
                 )
             }
         }
@@ -229,6 +233,7 @@ private fun HomeScreen(
     onAlbum: (Album) -> Unit,
     onArtist: (String) -> Unit,
     onPlaylist: (Long) -> Unit,
+    onFolders: () -> Unit,
 ) {
     var creating by remember { mutableStateOf(false) }
     if (creating) {
@@ -265,6 +270,9 @@ private fun HomeScreen(
                         else "${vm.songs.size} canciones · ${vm.artists.size} artistas",
                         color = Gray, style = MaterialTheme.typography.bodySmall,
                     )
+                }
+                IconButton(onClick = onFolders) {
+                    Icon(Icons.Filled.FolderOpen, "Carpetas de música", tint = Gray)
                 }
                 Pill("Aleatorio", Icons.Filled.Shuffle, enabled = vm.songs.isNotEmpty(), onClick = vm::shuffleAll)
             }
@@ -1147,6 +1155,54 @@ private fun PlayerScreen(
             }
         }
         Spacer(Modifier.weight(0.6f))
+    }
+}
+
+// ---------------------------------------------------------------- Carpetas
+
+@Composable
+private fun FoldersScreen(vm: MainViewModel, onBack: () -> Unit) {
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        uri?.let(vm::addFolder)
+    }
+    LazyColumn(contentPadding = PaddingValues(20.dp)) {
+        item {
+            BackButton(onBack)
+            Spacer(Modifier.height(12.dp))
+            Text("Carpetas de música", style = MaterialTheme.typography.headlineSmall)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                if (vm.folders.isEmpty()) "Ahora se lee la música de todo el móvil. Elige una o varias carpetas para leer solo de ahí (incluye sus subcarpetas)."
+                else "Solo se lee la música de estas carpetas y sus subcarpetas.",
+                color = Gray, fontSize = 14.sp,
+            )
+            Spacer(Modifier.height(20.dp))
+        }
+        items(vm.folders, key = { it }) { path ->
+            Row(
+                Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    Modifier.size(44.dp).clip(RoundedCornerShape(6.dp)).background(Card),
+                    contentAlignment = Alignment.Center,
+                ) { Icon(Icons.Filled.Folder, null, Modifier.size(22.dp), tint = White) }
+                Spacer(Modifier.width(14.dp))
+                Text(folderLabel(path), Modifier.weight(1f), fontSize = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                IconButton(onClick = { vm.removeFolder(path) }) {
+                    Icon(Icons.Filled.Close, "Quitar carpeta", Modifier.size(20.dp), tint = Gray)
+                }
+            }
+        }
+        item {
+            Spacer(Modifier.height(16.dp))
+            Pill("Añadir carpeta", Icons.Filled.Add, filled = true) { picker.launch(null) }
+            Spacer(Modifier.height(20.dp))
+            Text(
+                if (vm.loading) "Buscando música…" else "${vm.songs.size} canciones en la biblioteca",
+                color = DarkGray, fontSize = 13.sp,
+            )
+        }
     }
 }
 

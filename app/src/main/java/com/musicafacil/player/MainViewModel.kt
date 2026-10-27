@@ -34,6 +34,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var loaded by mutableStateOf(false)
         private set
     private var songById: Map<Long, Song> = emptyMap()
+    private var loadJob: Job? = null
 
     // --- Favoritas y playlists ---
     private val store = PlaylistStore(app)
@@ -97,13 +98,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun loadLibrary() {
         if (loading) return
         loading = true
-        viewModelScope.launch {
+        loadJob = viewModelScope.launch {
             withContext(Dispatchers.IO) {
                 if (!editsLoaded) {
                     edits = metadataStore.load()
                     editsLoaded = true
                 }
-                rawSongs = MusicLibrary.loadSongs(getApplication())
+                rawSongs = MusicLibrary.loadSongs(getApplication(), folders)
             }
             rebuild()
             loading = false
@@ -128,6 +129,34 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun album(id: Long): Album? = albums.firstOrNull { it.id == id }
     fun artist(name: String): Artist? = artists.firstOrNull { artistKey(it.name) == artistKey(name) }
+
+    // --- Carpetas ---
+
+    private val folderSettings = FolderSettings(app)
+    var folders by mutableStateOf(folderSettings.load())
+        private set
+
+    fun addFolder(uri: android.net.Uri) {
+        val path = folderPathFromTreeUri(uri) ?: return
+        // Si ya hay una carpeta que la contiene, no hace falta añadirla
+        if (folders.any { isInFolders("$path/x", listOf(it)) }) return
+        setFolders(folders.filter { !isInFolders("$it/x", listOf(path)) } + path)
+    }
+
+    fun removeFolder(path: String) = setFolders(folders - path)
+
+    private fun setFolders(list: List<String>) {
+        folders = list.sorted()
+        folderSettings.save(folders)
+        reloadLibrary()
+    }
+
+    /** Vuelve a leer la biblioteca aunque ya haya una lectura en marcha. */
+    private fun reloadLibrary() {
+        loadJob?.cancel()
+        loading = false
+        loadLibrary()
+    }
 
     // --- Edición de etiquetas ---
 
