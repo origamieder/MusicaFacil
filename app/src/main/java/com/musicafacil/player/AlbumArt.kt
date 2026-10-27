@@ -32,6 +32,9 @@ import androidx.compose.material.icons.filled.Album
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
@@ -74,14 +77,16 @@ private fun loadArt(context: Context, albumId: Long, px: Int): ImageBitmap? = tr
 fun rememberAlbumArt(albumId: Long?, sizePx: Int): ImageBitmap? {
     val context = LocalContext.current
     val key = "$albumId@$sizePx"
-    val art by produceState(initialValue = ArtCache.bitmaps.get(key), key) {
-        if (value == null && albumId != null && key !in ArtCache.missing) {
+    // El estado va ligado a la clave: al cambiar de canción se parte de cero y no se queda la portada anterior
+    val art = remember(key) { mutableStateOf(ArtCache.bitmaps.get(key)) }
+    LaunchedEffect(key) {
+        if (art.value == null && albumId != null && key !in ArtCache.missing) {
             val loaded = withContext(Dispatchers.IO) { loadArt(context, albumId, sizePx) }
             if (loaded != null) ArtCache.bitmaps.put(key, loaded) else ArtCache.missing += key
-            value = loaded
+            art.value = loaded
         }
     }
-    return art
+    return art.value
 }
 
 /**

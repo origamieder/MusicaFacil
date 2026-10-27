@@ -17,7 +17,12 @@ jobs:
       - name: Compilar
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease
+          set -o pipefail
+          ./gradlew assembleRelease 2>&1 | tee build.log || {
+            # Muestra los errores como anotaciones para verlos sin abrir el log
+            grep -E "^e: |What went wrong" -A3 build.log | head -40 | while IFS= read -r l; do echo "::error::$l"; done
+            exit 1
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: EDplayer-apk

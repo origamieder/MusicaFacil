@@ -96,11 +96,10 @@ object MusicLibrary {
             val albumArtistCol = c.getColumnIndex(MediaStore.Audio.Media.ALBUM_ARTIST)
             val dataCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA)
             while (c.moveToNext()) {
-                if (!isInFolders(c.getString(dataCol), folders)) continue
                 val artist = c.getString(artistCol)
                     ?.takeIf { it.isNotBlank() && it != MediaStore.UNKNOWN_STRING }
                     ?: "Artista desconocido"
-                songs += Song(
+                if (isInFolders(c.getString(dataCol), folders)) songs += Song(
                     id = c.getLong(idCol),
                     title = c.getString(titleCol)?.takeIf { it.isNotBlank() } ?: "Sin título",
                     artist = artist,
