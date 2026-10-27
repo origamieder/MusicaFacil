@@ -188,6 +188,7 @@ private fun App(vm: MainViewModel = viewModel()) {
     vm.editSongRequest?.let { song ->
         SongEditDialog(vm, song) { vm.editSongRequest = null }
     }
+    vm.whatNext?.let { WhatNextDialog(vm, it) }
 
     val goArtist: (String) -> Unit = { openArtist = it; openAlbumId = null; showPlayer = false; showQueue = false }
 
@@ -1012,6 +1013,62 @@ private fun AddToPlaylistDialog(vm: MainViewModel, songIds: List<Long>, onDone: 
             }
         },
         confirmButton = { TextButton(onClick = onDone) { Text("Cancelar", color = Gray) } },
+    )
+}
+
+/** Al acabar un disco: otro del mismo artista o elegir otro artista. */
+@Composable
+private fun WhatNextDialog(vm: MainViewModel, info: MainViewModel.WhatNext) {
+    var choosing by remember { mutableStateOf(info.artist == null) }
+    var query by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = vm::dismissWhatNext,
+        containerColor = Card,
+        title = { Text(if (choosing) "Elige artista" else "Fin del disco") },
+        text = {
+            if (!choosing) {
+                val artist = info.artist!!
+                val others = artist.albums.count { it.id != info.albumId }
+                Column {
+                    Text("¿Qué quieres escuchar ahora?", color = Gray)
+                    Spacer(Modifier.height(12.dp))
+                    DialogRow(
+                        Icons.Filled.Shuffle,
+                        if (others > 0) "Otro disco de ${artist.name}" else "Repetir este disco de ${artist.name}",
+                    ) { vm.playRandomAlbumOf(artist) }
+                    DialogRow(Icons.Filled.Person, "Cambiar de artista") { choosing = true }
+                }
+            } else {
+                val q = query.trim().lowercase()
+                val list = remember(vm.artists, q) {
+                    vm.artists.filter { q.isEmpty() || q in it.name.lowercase() }
+                }
+                Column {
+                    SearchField(query) { query = it }
+                    Spacer(Modifier.height(8.dp))
+                    LazyColumn(Modifier.heightIn(max = 380.dp)) {
+                        items(list, key = { it.name }) { a ->
+                            Row(
+                                Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
+                                    .clickable { vm.playRandomAlbumOf(a) }
+                                    .padding(vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                AlbumArt(a.albums.first().id, Modifier.size(40.dp), sizePx = 150, shape = CircleShape)
+                                Spacer(Modifier.width(12.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(a.name, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(countLabel(a), fontSize = 12.sp, color = Gray)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = vm::dismissWhatNext) { Text("Nada por ahora", color = Gray) }
+        },
     )
 }
 

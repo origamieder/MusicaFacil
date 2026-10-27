@@ -69,6 +69,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED,
                 )
             ) queueVersion++
+            if (events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED) &&
+                player.playbackState == Player.STATE_ENDED && player.mediaItemCount > 0
+            ) askWhatNext(player)
         }
     }
 
@@ -291,7 +294,38 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun next() = controller?.seekToNext()
+    /** Siguiente canción; si era la última del disco, pregunta qué escuchar después. */
+    fun next() {
+        val c = controller ?: return
+        if (!c.hasNextMediaItem() && c.repeatMode == Player.REPEAT_MODE_OFF && c.mediaItemCount > 0) askWhatNext(c)
+        else c.seekToNext()
+    }
+
+    // --- Al terminar un disco ---
+
+    /** El disco (o la lista) ha terminado: qué artista y disco sonaban. */
+    data class WhatNext(val artist: Artist?, val albumId: Long?)
+
+    var whatNext by mutableStateOf<WhatNext?>(null)
+        private set
+
+    private fun askWhatNext(player: Player) {
+        val albumId = player.currentMediaItem?.mediaMetadata?.extras?.getLong(EXTRA_ALBUM_ID)
+        val artist = albumId?.let { album(it) }?.artist?.let { artist(it) }
+        whatNext = WhatNext(artist, albumId)
+    }
+
+    fun dismissWhatNext() {
+        whatNext = null
+    }
+
+    /** Reproduce un disco al azar del artista, evitando repetir el que acaba de sonar. */
+    fun playRandomAlbumOf(artist: Artist) {
+        val last = whatNext?.albumId
+        val choices = artist.albums.filter { it.id != last }.ifEmpty { artist.albums }
+        whatNext = null
+        if (choices.isNotEmpty()) playAlbum(choices.random())
+    }
     fun previous() = controller?.seekToPrevious()
 
     /** Siempre a la canción anterior (sin reiniciar la actual), para el gesto de deslizar. */
