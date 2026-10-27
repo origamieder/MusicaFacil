@@ -69,8 +69,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED,
                 )
             ) queueVersion++
+            // Con la app fuera de pantalla no se pregunta: el servicio sigue solo con el mismo artista
             if (events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED) &&
-                player.playbackState == Player.STATE_ENDED && player.mediaItemCount > 0
+                player.playbackState == Player.STATE_ENDED && player.mediaItemCount > 0 &&
+                AppVisibility.visible
             ) askWhatNext(player)
         }
     }
