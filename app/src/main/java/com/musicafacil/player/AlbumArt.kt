@@ -2,11 +2,24 @@ package com.musicafacil.player
 
 import android.content.ContentUris
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
+import android.graphics.Paint
 import android.os.Build
 import android.provider.MediaStore
 import android.util.LruCache
 import android.util.Size
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -23,7 +36,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.BlurredEdgeTreatment
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asImageBitmap
@@ -52,14 +70,8 @@ private fun loadArt(context: Context, albumId: Long, px: Int): ImageBitmap? = tr
     null
 }
 
-/** Carátula del álbum (de la etiqueta del archivo o cover.jpg), con caché en memoria. */
 @Composable
-fun AlbumArt(
-    albumId: Long?,
-    modifier: Modifier = Modifier,
-    sizePx: Int = 400,
-    shape: Shape = RoundedCornerShape(6.dp),
-) {
+fun rememberAlbumArt(albumId: Long?, sizePx: Int): ImageBitmap? {
     val context = LocalContext.current
     val key = "$albumId@$sizePx"
     val art by produceState(initialValue = ArtCache.bitmaps.get(key), key) {
@@ -69,6 +81,75 @@ fun AlbumArt(
             value = loaded
         }
     }
+    return art
+}
+
+/**
+ * Versión diminuta de la portada (8x8 con un borde transparente de 2 px).
+ * Al ampliarla con filtrado bilineal se convierte en un degradado suave con
+ * los colores de cada zona de la portada, que se desvanece hacia fuera.
+ */
+private fun glowBitmap(art: ImageBitmap): ImageBitmap {
+    val src = art.asAndroidBitmap().let {
+        if (it.config == Bitmap.Config.HARDWARE) it.copy(Bitmap.Config.ARGB_8888, false) else it
+    }
+    val inner = Bitmap.createScaledBitmap(src, 8, 8, true)
+    val out = Bitmap.createBitmap(12, 12, Bitmap.Config.ARGB_8888)
+    val paint = Paint(Paint.FILTER_BITMAP_FLAG).apply {
+        // Algo más de saturación para que el brillo parezca luz
+        colorFilter = ColorMatrixColorFilter(ColorMatrix().apply { setSaturation(1.5f) })
+    }
+    Canvas(out).drawBitmap(inner, 2f, 2f, paint)
+    return out.asImageBitmap()
+}
+
+/** Portada grande con un halo de luz de sus propios colores alrededor. */
+@Composable
+fun GlowingAlbumArt(albumId: Long?, playing: Boolean, modifier: Modifier = Modifier) {
+    val art = rememberAlbumArt(albumId, 1000)
+    val glow by produceState<ImageBitmap?>(null, art) {
+        value = art?.let { withContext(Dispatchers.Default) { glowBitmap(it) } }
+    }
+    val pulse by rememberInfiniteTransition(label = "glow").animateFloat(
+        initialValue = 0.65f,
+        targetValue = 0.95f,
+        animationSpec = infiniteRepeatable(tween(2600, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "pulse",
+    )
+    val intensity by animateFloatAsState(if (playing) 1f else 0.55f, tween(800), label = "intensity")
+
+    Box(modifier) {
+        Crossfade(targetState = glow, animationSpec = tween(700), label = "glowFade") { g ->
+            if (g != null) {
+                Image(
+                    g, contentDescription = null,
+                    contentScale = ContentScale.FillBounds,
+                    filterQuality = FilterQuality.Low,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            scaleX = 1.6f
+                            scaleY = 1.6f
+                            alpha = (if (playing) pulse else 0.8f) * intensity
+                        }
+                        // En Android 12+ difumina aún más; en versiones anteriores no hace nada
+                        .blur(36.dp, BlurredEdgeTreatment.Unbounded),
+                )
+            }
+        }
+        AlbumArt(albumId, Modifier.fillMaxSize(), sizePx = 1000, shape = RoundedCornerShape(8.dp))
+    }
+}
+
+/** Carátula del álbum (de la etiqueta del archivo o cover.jpg), con caché en memoria. */
+@Composable
+fun AlbumArt(
+    albumId: Long?,
+    modifier: Modifier = Modifier,
+    sizePx: Int = 400,
+    shape: Shape = RoundedCornerShape(6.dp),
+) {
+    val art = rememberAlbumArt(albumId, sizePx)
     Box(
         modifier
             .clip(shape)

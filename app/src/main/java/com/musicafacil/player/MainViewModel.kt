@@ -98,22 +98,94 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (loading) return
         loading = true
         viewModelScope.launch {
-            val (s, a, ar) = withContext(Dispatchers.IO) {
-                val s = MusicLibrary.loadSongs(getApplication())
-                val a = MusicLibrary.groupAlbums(s)
-                Triple(s, a, MusicLibrary.groupArtists(a))
+            withContext(Dispatchers.IO) {
+                if (!editsLoaded) {
+                    edits = metadataStore.load()
+                    editsLoaded = true
+                }
+                rawSongs = MusicLibrary.loadSongs(getApplication())
             }
-            songs = s
-            songById = s.associateBy { it.id }
-            albums = a
-            artists = ar
+            rebuild()
             loading = false
             loaded = true
         }
     }
 
+    /** Aplica las ediciones a las canciones leídas y vuelve a agrupar álbumes y artistas. */
+    private suspend fun rebuild() {
+        val current = edits
+        val raw = rawSongs
+        val (s, a, ar) = withContext(Dispatchers.Default) {
+            val s = raw.map { current.apply(it) }
+            val a = MusicLibrary.groupAlbums(s)
+            Triple(s, a, MusicLibrary.groupArtists(a))
+        }
+        songs = s
+        songById = s.associateBy { it.id }
+        albums = a
+        artists = ar
+    }
+
     fun album(id: Long): Album? = albums.firstOrNull { it.id == id }
-    fun artist(name: String): Artist? = artists.firstOrNull { it.name == name }
+    fun artist(name: String): Artist? = artists.firstOrNull { artistKey(it.name) == artistKey(name) }
+
+    // --- Edición de etiquetas ---
+
+    private val metadataStore = MetadataStore(app)
+    private var edits = MetadataEdits()
+    private var editsLoaded = false
+    private var rawSongs: List<Song> = emptyList()
+
+    /** Canción cuyo diálogo de edición está abierto. */
+    var editSongRequest by mutableStateOf<Song?>(null)
+
+    fun editSong(id: Long, title: String, artist: String, album: String, albumArtist: String) {
+        val raw = rawSongs.firstOrNull { it.id == id } ?: return
+        fun changed(new: String, old: String) = new.trim().takeIf { it.isNotEmpty() && it != old }
+        val e = SongEdit(
+            title = changed(title, raw.title),
+            artist = changed(artist, raw.artist),
+            album = changed(album, raw.album),
+            albumArtist = changed(albumArtist, raw.albumArtist),
+        )
+        saveEdits(edits.copy(songs = if (e.isEmpty) edits.songs - id else edits.songs + (id to e)))
+    }
+
+    fun resetSong(id: Long) = saveEdits(edits.copy(songs = edits.songs - id))
+
+    fun editAlbum(album: Album, title: String, albumArtist: String) {
+        val t = title.trim()
+        val aa = albumArtist.trim()
+        val songs = edits.songs.toMutableMap()
+        album.songs.forEach { s ->
+            val e = songs[s.id] ?: SongEdit()
+            songs[s.id] = e.copy(
+                album = t.ifEmpty { null } ?: e.album,
+                albumArtist = aa.ifEmpty { null } ?: e.albumArtist,
+            )
+        }
+        saveEdits(edits.copy(songs = songs))
+    }
+
+    /** Renombra un artista; si el nombre nuevo es el de otro artista, se unen. */
+    fun renameArtist(artist: Artist, newName: String) {
+        val name = newName.trim()
+        if (name.isEmpty()) return
+        val aliases = edits.artistAliases.toMutableMap()
+        artist.songs.flatMap { listOf(it.artist, it.albumArtist) }
+            .filter { artistKey(it) == artistKey(artist.name) }
+            .plus(artist.name)
+            .forEach { aliases[artistKey(it)] = name }
+        saveEdits(edits.copy(artistAliases = aliases))
+    }
+
+    private fun saveEdits(newEdits: MetadataEdits) {
+        edits = newEdits
+        viewModelScope.launch {
+            rebuild()
+            withContext(Dispatchers.IO) { metadataStore.save(newEdits) }
+        }
+    }
 
     // --- Acciones ---
 
@@ -153,6 +225,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun next() = controller?.seekToNext()
     fun previous() = controller?.seekToPrevious()
+
+    /** Siempre a la canción anterior (sin reiniciar la actual), para el gesto de deslizar. */
+    fun previousTrack() = controller?.seekToPreviousMediaItem()
 
     fun toggleShuffle() {
         controller?.let { it.shuffleModeEnabled = !it.shuffleModeEnabled }

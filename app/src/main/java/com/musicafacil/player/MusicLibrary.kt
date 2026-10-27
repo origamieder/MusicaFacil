@@ -123,7 +123,13 @@ object MusicLibrary {
             .sortedWith(compareBy({ it.artist.lowercase() }, { it.title.lowercase() }))
 
     fun groupArtists(albums: List<Album>): List<Artist> =
-        albums.groupBy { it.artist.lowercase() }
-            .map { (_, list) -> Artist(list.first().artist, list.sortedBy { it.title.lowercase() }) }
+        albums.groupBy { artistKey(it.artist) }
+            .map { (_, list) ->
+                // Se muestra la forma del nombre que más se repite ("AC/DC" frente a "AC-DC")
+                val name = list.flatMap { it.songs }.map { it.albumArtist }
+                    .filter { artistKey(it) == artistKey(list.first().artist) }
+                    .groupingBy { it }.eachCount().maxByOrNull { it.value }?.key ?: list.first().artist
+                Artist(name, list.map { if (it.artist == name) it else it.copy(artist = name) }.sortedBy { it.title.lowercase() })
+            }
             .sortedBy { it.name.lowercase().removePrefix("the ") }
 }

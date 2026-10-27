@@ -13,13 +13,18 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -38,6 +43,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -53,6 +61,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.C
 import androidx.media3.common.Player
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.math.abs
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 
@@ -154,6 +164,9 @@ private fun App(vm: MainViewModel = viewModel()) {
     vm.addToPlaylistRequest?.let { ids ->
         AddToPlaylistDialog(vm, ids) { vm.addToPlaylistRequest = null }
     }
+    vm.editSongRequest?.let { song ->
+        SongEditDialog(vm, song) { vm.editSongRequest = null }
+    }
 
     val goArtist: (String) -> Unit = { openArtist = it; openAlbumId = null; showPlayer = false; showQueue = false }
 
@@ -169,10 +182,20 @@ private fun App(vm: MainViewModel = viewModel()) {
             val playlist = openPlaylistId?.let { vm.playlist(it) }
             when {
                 showQueue -> QueueScreen(vm) { showQueue = false }
-                showPlayer -> PlayerScreen(vm, onArtist = goArtist, onQueue = { showQueue = true }) { showPlayer = false }
+                showPlayer -> PlayerScreen(
+                    vm,
+                    onArtist = goArtist,
+                    onQueue = { showQueue = true },
+                    onAlbum = { openAlbumId = it; showPlayer = false },
+                    onHome = { showPlayer = false; openAlbumId = null; openPlaylistId = null; openArtist = null },
+                ) { showPlayer = false }
                 album != null -> AlbumScreen(vm, album, onArtist = goArtist) { openAlbumId = null }
                 playlist != null -> PlaylistScreen(vm, playlist) { openPlaylistId = null }
-                artist != null -> ArtistScreen(vm, artist, onAlbum = { openAlbumId = it.id }) { openArtist = null }
+                artist != null -> ArtistScreen(
+                    vm, artist,
+                    onAlbum = { openAlbumId = it.id },
+                    onRenamed = { openArtist = it },
+                ) { openArtist = null }
                 else -> HomeScreen(
                     vm,
                     onAlbum = { openAlbumId = it.id },
@@ -445,13 +468,40 @@ private fun countLabel(artist: Artist): String {
 // ---------------------------------------------------------------- Artista
 
 @Composable
-private fun ArtistScreen(vm: MainViewModel, artist: Artist, onAlbum: (Album) -> Unit, onBack: () -> Unit) {
+private fun ArtistScreen(
+    vm: MainViewModel,
+    artist: Artist,
+    onAlbum: (Album) -> Unit,
+    onRenamed: (String) -> Unit,
+    onBack: () -> Unit,
+) {
+    var renaming by remember { mutableStateOf(false) }
+    if (renaming) {
+        NameDialog(
+            "Renombrar artista", artist.name, "Guardar",
+            hint = "Si escribes el nombre de otro artista, se unirán en uno solo.",
+            onDismiss = { renaming = false },
+        ) {
+            vm.renameArtist(artist, it)
+            onRenamed(it.trim())
+            renaming = false
+        }
+    }
     AlbumGrid(
         albums = artist.albums,
         pad = PaddingValues(20.dp),
         header = {
             Column(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
-                BackButton(onBack)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    BackButton(onBack)
+                    Spacer(Modifier.weight(1f))
+                    HeaderMenu(
+                        MenuAction("Añadir a playlist", Icons.AutoMirrored.Filled.PlaylistAdd) {
+                            vm.addToPlaylistRequest = artist.songs.map { it.id }
+                        },
+                        MenuAction("Renombrar o unir artista", Icons.Filled.Edit) { renaming = true },
+                    )
+                }
                 Spacer(Modifier.height(12.dp))
                 Text(artist.name, style = MaterialTheme.typography.headlineLarge)
                 Text(countLabel(artist), color = Gray, style = MaterialTheme.typography.bodySmall)
@@ -471,9 +521,20 @@ private fun ArtistScreen(vm: MainViewModel, artist: Artist, onAlbum: (Album) -> 
 @Composable
 private fun AlbumScreen(vm: MainViewModel, album: Album, onArtist: (String) -> Unit, onBack: () -> Unit) {
     val currentId = vm.currentItem?.mediaId
+    var editing by remember { mutableStateOf(false) }
+    if (editing) AlbumEditDialog(vm, album) { editing = false }
     LazyColumn(contentPadding = PaddingValues(20.dp)) {
         item {
-            BackButton(onBack)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                BackButton(onBack)
+                Spacer(Modifier.weight(1f))
+                HeaderMenu(
+                    MenuAction("Añadir a playlist", Icons.AutoMirrored.Filled.PlaylistAdd) {
+                        vm.addToPlaylistRequest = album.songs.map { it.id }
+                    },
+                    MenuAction("Editar álbum", Icons.Filled.Edit) { editing = true },
+                )
+            }
             Spacer(Modifier.height(12.dp))
             Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                 AlbumArt(album.id, Modifier.fillMaxWidth(0.72f).aspectRatio(1f), sizePx = 900)
@@ -492,9 +553,6 @@ private fun AlbumScreen(vm: MainViewModel, album: Album, onArtist: (String) -> U
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Pill("Reproducir", Icons.Filled.PlayArrow, filled = true) { vm.playAlbum(album) }
                 Pill("Aleatorio", Icons.Filled.Shuffle) { vm.playAlbum(album, shuffle = true) }
-                RoundIcon(Icons.AutoMirrored.Filled.PlaylistAdd, "Añadir álbum a playlist") {
-                    vm.addToPlaylistRequest = album.songs.map { it.id }
-                }
             }
             Spacer(Modifier.height(16.dp))
         }
@@ -576,6 +634,11 @@ private fun SongMenu(vm: MainViewModel, song: Song, playlistId: Long? = null) {
                 text = { Text("Añadir a playlist") },
                 leadingIcon = { Icon(Icons.AutoMirrored.Filled.PlaylistAdd, null) },
                 onClick = { vm.addToPlaylistRequest = listOf(song.id); open = false },
+            )
+            DropdownMenuItem(
+                text = { Text("Editar información") },
+                leadingIcon = { Icon(Icons.Filled.Edit, null) },
+                onClick = { vm.editSongRequest = song; open = false },
             )
             if (playlistId != null && playlistId != FAVORITES_ID) {
                 DropdownMenuItem(
@@ -703,6 +766,7 @@ private fun NameDialog(
     title: String,
     initial: String,
     confirm: String,
+    hint: String? = null,
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit,
 ) {
@@ -712,20 +776,96 @@ private fun NameDialog(
         containerColor = Card,
         title = { Text(title) },
         text = {
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                singleLine = true,
-                placeholder = { Text("Nombre", color = Gray) },
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = White, unfocusedBorderColor = DarkGray, cursorColor = White,
-                ),
-            )
+            Column {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    singleLine = true,
+                    placeholder = { Text("Nombre", color = Gray) },
+                    colors = fieldColors(),
+                )
+                if (hint != null) {
+                    Spacer(Modifier.height(10.dp))
+                    Text(hint, color = Gray, fontSize = 13.sp)
+                }
+            }
         },
         confirmButton = {
             TextButton(onClick = { onConfirm(name) }, enabled = name.isNotBlank()) { Text(confirm) }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar", color = Gray) } },
+    )
+}
+
+@Composable
+private fun fieldColors() = OutlinedTextFieldDefaults.colors(
+    focusedBorderColor = White, unfocusedBorderColor = DarkGray, cursorColor = White,
+    focusedLabelColor = White, unfocusedLabelColor = Gray,
+)
+
+@Composable
+private fun EditField(label: String, value: String, onChange: (String) -> Unit) {
+    OutlinedTextField(
+        value = value, onValueChange = onChange, singleLine = true,
+        label = { Text(label) }, colors = fieldColors(), modifier = Modifier.fillMaxWidth(),
+    )
+}
+
+private const val EDIT_NOTE = "Los cambios se guardan en EDplayer; tus archivos no se modifican."
+
+@Composable
+private fun SongEditDialog(vm: MainViewModel, song: Song, onDone: () -> Unit) {
+    var title by remember { mutableStateOf(song.title) }
+    var artist by remember { mutableStateOf(song.artist) }
+    var album by remember { mutableStateOf(song.album) }
+    var albumArtist by remember { mutableStateOf(song.albumArtist) }
+    AlertDialog(
+        onDismissRequest = onDone,
+        containerColor = Card,
+        title = { Text("Editar canción") },
+        text = {
+            Column(
+                Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                EditField("Título", title) { title = it }
+                EditField("Artista", artist) { artist = it }
+                EditField("Álbum", album) { album = it }
+                EditField("Artista del álbum", albumArtist) { albumArtist = it }
+                Text(EDIT_NOTE, color = Gray, fontSize = 12.sp)
+                Text(
+                    "Restablecer valores del archivo", color = White, fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.clickable { vm.resetSong(song.id); onDone() }.padding(vertical = 6.dp),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { vm.editSong(song.id, title, artist, album, albumArtist); onDone() }) { Text("Guardar") }
+        },
+        dismissButton = { TextButton(onClick = onDone) { Text("Cancelar", color = Gray) } },
+    )
+}
+
+@Composable
+private fun AlbumEditDialog(vm: MainViewModel, album: Album, onDone: () -> Unit) {
+    var title by remember { mutableStateOf(album.title) }
+    var artist by remember { mutableStateOf(album.artist) }
+    AlertDialog(
+        onDismissRequest = onDone,
+        containerColor = Card,
+        title = { Text("Editar álbum") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                EditField("Título del álbum", title) { title = it }
+                EditField("Artista del álbum", artist) { artist = it }
+                Text("Se aplica a las ${album.songs.size} canciones. $EDIT_NOTE", color = Gray, fontSize = 12.sp)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { vm.editAlbum(album, title, artist); onDone() }) { Text("Guardar") }
+        },
+        dismissButton = { TextButton(onClick = onDone) { Text("Cancelar", color = Gray) } },
     )
 }
 
@@ -833,14 +973,56 @@ private fun PlayerScreen(
     vm: MainViewModel,
     onArtist: (String) -> Unit,
     onQueue: () -> Unit,
+    onAlbum: (Long) -> Unit,
+    onHome: () -> Unit,
     onClose: () -> Unit,
 ) {
     val controller = vm.controller
     val meta = vm.currentItem?.mediaMetadata
     val (position, duration) = rememberProgress(vm)
     var dragging by remember { mutableStateOf<Float?>(null) }
+    val albumId = meta?.extras?.getLong(EXTRA_ALBUM_ID)
 
-    Column(Modifier.fillMaxSize().padding(horizontal = 28.dp, vertical = 8.dp)) {
+    // Gestos: ← siguiente, → anterior, ↑ abrir álbum, ↓ pantalla principal
+    val scope = rememberCoroutineScope()
+    val swipeX = remember { Animatable(0f) }
+    val swipeY = remember { Animatable(0f) }
+    val threshold = with(LocalDensity.current) { 90.dp.toPx() }
+    val currentOnAlbum by rememberUpdatedState(onAlbum)
+    val currentOnHome by rememberUpdatedState(onHome)
+    val currentAlbumId by rememberUpdatedState(albumId)
+    val swipe = Modifier.pointerInput(Unit) {
+        var dx = 0f
+        var dy = 0f
+        fun reset() {
+            scope.launch { swipeX.animateTo(0f, spring(stiffness = Spring.StiffnessMediumLow)) }
+            scope.launch { swipeY.animateTo(0f, spring(stiffness = Spring.StiffnessMediumLow)) }
+        }
+        detectDragGestures(
+            onDragStart = { dx = 0f; dy = 0f },
+            onDragEnd = {
+                val horizontal = abs(dx) > abs(dy)
+                when {
+                    horizontal && dx < -threshold -> vm.next()
+                    horizontal && dx > threshold -> vm.previousTrack()
+                    !horizontal && dy < -threshold -> currentAlbumId?.let(currentOnAlbum)
+                    !horizontal && dy > threshold -> currentOnHome()
+                }
+                reset()
+            },
+            onDragCancel = { reset() },
+        ) { change, amount ->
+            change.consume()
+            dx += amount.x
+            dy += amount.y
+            scope.launch {
+                swipeX.snapTo(dx)
+                swipeY.snapTo(dy)
+            }
+        }
+    }
+
+    Column(swipe.fillMaxSize().padding(horizontal = 28.dp, vertical = 8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onClose, Modifier.offset(x = (-12).dp)) {
                 Icon(Icons.Filled.KeyboardArrowDown, "Cerrar", Modifier.size(32.dp))
@@ -853,11 +1035,17 @@ private fun PlayerScreen(
             }
         }
         Spacer(Modifier.weight(1f))
-        AlbumArt(
+        GlowingAlbumArt(
             meta?.extras?.getLong(EXTRA_ALBUM_ID),
-            Modifier.align(Alignment.CenterHorizontally).widthIn(max = 440.dp).fillMaxWidth().aspectRatio(1f),
-            sizePx = 1000,
-            shape = RoundedCornerShape(8.dp),
+            playing = vm.playWhenReady,
+            modifier = Modifier.align(Alignment.CenterHorizontally).widthIn(max = 440.dp).fillMaxWidth().aspectRatio(1f)
+                .graphicsLayer {
+                    val x = swipeX.value
+                    val y = swipeY.value
+                    translationX = x * 0.6f
+                    translationY = y * 0.35f
+                    alpha = 1f - (maxOf(abs(x), abs(y)) / (threshold * 4)).coerceIn(0f, 0.5f)
+                },
         )
         Spacer(Modifier.weight(1f))
         val songId = vm.currentItem?.mediaId?.toLongOrNull()
@@ -1081,12 +1269,23 @@ private fun Pill(
     }
 }
 
+private class MenuAction(val label: String, val icon: ImageVector, val onClick: () -> Unit)
+
 @Composable
-private fun RoundIcon(icon: ImageVector, description: String, onClick: () -> Unit) {
-    OutlinedIconButton(
-        onClick = onClick, modifier = Modifier.size(38.dp),
-        border = BorderStroke(1.dp, Color(0xFF5A5A5A)),
-    ) { Icon(icon, description, Modifier.size(18.dp), tint = White) }
+private fun HeaderMenu(vararg actions: MenuAction) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }) { Icon(Icons.Filled.MoreVert, "Opciones") }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            actions.forEach { a ->
+                DropdownMenuItem(
+                    text = { Text(a.label) },
+                    leadingIcon = { Icon(a.icon, null) },
+                    onClick = { open = false; a.onClick() },
+                )
+            }
+        }
+    }
 }
 
 @Composable
