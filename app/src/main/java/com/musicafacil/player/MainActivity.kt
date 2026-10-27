@@ -50,6 +50,10 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.findRootCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.Color
@@ -201,7 +205,7 @@ private fun App(vm: MainViewModel = viewModel()) {
                 showFolders -> FoldersScreen(vm) { showFolders = false }
                 showQueue -> QueueScreen(vm) { showQueue = false }
                 showPlayer -> Box(Modifier.fillMaxSize()) {
-                    // Al deslizar hacia arriba, debajo aparece el disco actual, de borroso a nítido
+                    // Al deslizar hacia abajo, debajo aparece el disco actual, de borroso a nítido
                     val underAlbum = vm.currentItem?.mediaMetadata?.extras?.getLong(EXTRA_ALBUM_ID)?.let { vm.album(it) }
                     val showUnder by remember { derivedStateOf { reveal > 0.001f } }
                     if (showUnder && underAlbum != null) {
@@ -1109,8 +1113,15 @@ private fun PlayerScreen(
     val currentOnReveal by rememberUpdatedState(onReveal)
     val currentAlbumId by rememberUpdatedState(albumId)
 
-    // 0 = reproductor normal, 1 = deslizado del todo hacia arriba (se ve el disco)
-    val reveal by remember { derivedStateOf { (-swipeY.value / travelY).coerceIn(0f, 1f) } }
+    // 0 = reproductor normal, 1 = deslizado del todo hacia abajo (se ve el disco)
+    val reveal by remember { derivedStateOf { (swipeY.value / travelY).coerceIn(0f, 1f) } }
+
+    // Dónde está la portada y dónde está la del mini reproductor, para llevarla hasta allí
+    val navBottom = WindowInsets.navigationBars.getBottom(density).toFloat()
+    val miniTarget = remember { MiniArtTarget() }
+    val miniArtSize = with(density) { 44.dp.toPx() }
+    val miniArtCenterX = with(density) { (14.dp + 22.dp).toPx() }
+    val miniArtFromBottom = with(density) { (10.dp + 22.dp).toPx() }
     LaunchedEffect(Unit) { snapshotFlow { reveal }.collect { currentOnReveal(it) } }
 
     val swipe = Modifier.pointerInput(Unit) {
@@ -1136,14 +1147,16 @@ private fun PlayerScreen(
                         swipeX.snapTo(-dir * screenW * 0.7f)
                         swipeX.animateTo(0f, spring(stiffness = Spring.StiffnessMediumLow))
                     }
-                    !horizontal && dy < -threshold && album != null -> scope.launch {
-                        launch { swipeX.animateTo(0f, tween(180)) }
-                        swipeY.animateTo(-travelY, tween(180))
+                    // ↓ abre el disco: la portada termina de viajar al mini reproductor
+                    !horizontal && dy > threshold && album != null -> scope.launch {
+                        launch { swipeX.animateTo(0f, tween(220)) }
+                        swipeY.animateTo(travelY, tween(220, easing = FastOutSlowInEasing))
                         currentOnAlbum(album)
                     }
-                    !horizontal && dy > threshold -> scope.launch {
+                    // ↑ vuelve a la pantalla principal
+                    !horizontal && dy < -threshold -> scope.launch {
                         launch { swipeX.animateTo(0f, tween(180)) }
-                        swipeY.animateTo(travelY, tween(180))
+                        swipeY.animateTo(-travelY, tween(180))
                         currentOnHome()
                     }
                     else -> reset()
@@ -1161,7 +1174,7 @@ private fun PlayerScreen(
         }
     }
 
-    // El resto de la pantalla se desvanece al deslizar hacia arriba
+    // El resto de la pantalla se desvanece al deslizar hacia abajo
     val fade = Modifier.graphicsLayer { alpha = 1f - reveal }
 
     Column(
@@ -1184,18 +1197,39 @@ private fun PlayerScreen(
         GlowingAlbumArt(
             meta?.extras?.getLong(EXTRA_ALBUM_ID),
             playing = vm.playWhenReady,
+            glowAlpha = { 1f - reveal },
             modifier = Modifier.align(Alignment.CenterHorizontally).widthIn(max = 440.dp).fillMaxWidth().aspectRatio(1f)
+                .onGloballyPositioned { c ->
+                    val b = c.boundsInRoot()
+                    miniTarget.centerX = b.center.x
+                    miniTarget.centerY = b.center.y
+                    miniTarget.width = b.width
+                    miniTarget.rootHeight = c.findRootCoordinates().size.height.toFloat()
+                }
                 .graphicsLayer {
                     val x = swipeX.value
                     val y = swipeY.value
-                    // Cuanto más se desliza, más pequeña y transparente: "desaparece"
-                    val progress = maxOf(abs(x) / screenW, abs(y) / travelY).coerceIn(0f, 1f)
-                    val scale = 1f - progress * 0.55f
-                    scaleX = scale
-                    scaleY = scale
-                    translationX = x * 0.8f
-                    translationY = y * 0.6f
-                    alpha = 1f - progress * 0.7f
+                    if (y > 0f && abs(y) >= abs(x)) {
+                        // ↓ La portada viaja encogiéndose hasta su sitio en el mini reproductor
+                        val p = (y / travelY).coerceIn(0f, 1f)
+                        val targetY = miniTarget.rootHeight - navBottom - miniArtFromBottom
+                        val endScale = miniArtSize / miniTarget.width.coerceAtLeast(1f)
+                        val scale = 1f + (endScale - 1f) * p
+                        scaleX = scale
+                        scaleY = scale
+                        translationX = (miniArtCenterX - miniTarget.centerX) * p + x * (1f - p)
+                        translationY = (targetY - miniTarget.centerY) * p
+                        alpha = 1f
+                    } else {
+                        // ←, → y ↑: cuanto más se desliza, más pequeña y transparente, "desaparece"
+                        val progress = maxOf(abs(x) / screenW, abs(y) / travelY).coerceIn(0f, 1f)
+                        val scale = 1f - progress * 0.55f
+                        scaleX = scale
+                        scaleY = scale
+                        translationX = x * 0.8f
+                        translationY = y * 0.6f
+                        alpha = 1f - progress * 0.7f
+                    }
                     // Sin capa intermedia: así el halo (que se dibuja fuera de la portada) no se recorta
                     compositingStrategy = CompositingStrategy.ModulateAlpha
                 },
@@ -1302,6 +1336,14 @@ private fun PlayerScreen(
         }
         Spacer(Modifier.weight(0.6f))
     }
+}
+
+/** Posición de la portada grande en pantalla (se actualiza al colocarla). */
+private class MiniArtTarget {
+    var centerX = 0f
+    var centerY = 0f
+    var width = 1f
+    var rootHeight = 0f
 }
 
 // ---------------------------------------------------------------- Carpetas

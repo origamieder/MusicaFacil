@@ -124,7 +124,13 @@ private val GlowCache = LruCache<Long, ImageBitmap>(200)
 
 /** Portada grande con un halo de luz de sus propios colores alrededor. */
 @Composable
-fun GlowingAlbumArt(albumId: Long?, playing: Boolean, modifier: Modifier = Modifier) {
+fun GlowingAlbumArt(
+    albumId: Long?,
+    playing: Boolean,
+    modifier: Modifier = Modifier,
+    /** Multiplica la intensidad del halo (se lee al dibujar, sin recomponer). */
+    glowAlpha: () -> Float = { 1f },
+) {
     // El halo sale de la miniatura pequeña (casi siempre ya en memoria por el mini reproductor),
     // así aparece enseguida sin esperar a la portada grande; y se guarda por álbum.
     val small = rememberAlbumArt(albumId, 150)
@@ -155,7 +161,7 @@ fun GlowingAlbumArt(albumId: Long?, playing: Boolean, modifier: Modifier = Modif
                         .graphicsLayer {
                             scaleX = 1.6f
                             scaleY = 1.6f
-                            alpha = (if (playing) pulse else 0.8f) * intensity
+                            alpha = (if (playing) pulse else 0.8f) * intensity * glowAlpha()
                         }
                         // En Android 12+ difumina aún más; en versiones anteriores no hace nada
                         .blur(36.dp, BlurredEdgeTreatment.Unbounded),
