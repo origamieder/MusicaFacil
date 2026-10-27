@@ -140,12 +140,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val path = folderPathFromTreeUri(uri) ?: return
         // Si ya hay una carpeta que la contiene, no hace falta añadirla
         if (folders.any { isInFolders("$path/x", listOf(it)) }) return
-        setFolders(folders.filter { !isInFolders("$it/x", listOf(path)) } + path)
+        applyFolders(folders.filter { !isInFolders("$it/x", listOf(path)) } + path)
     }
 
-    fun removeFolder(path: String) = setFolders(folders - path)
+    fun removeFolder(path: String) = applyFolders(folders - path)
 
-    private fun setFolders(list: List<String>) {
+    private fun applyFolders(list: List<String>) {
         folders = list.sorted()
         folderSettings.save(folders)
         reloadLibrary()
