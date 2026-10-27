@@ -123,6 +123,13 @@ private fun hasAudioPermission(ctx: Context) =
 
 // ---------------------------------------------------------------- Navegación
 
+enum class AlbumView(val label: String, val icon: ImageVector) {
+    List("Lista", Icons.AutoMirrored.Filled.ViewList),
+    Small("Cuadrícula pequeña", Icons.Filled.Apps),
+    Medium("Cuadrícula mediana", Icons.Filled.ViewComfy),
+    Large("Cuadrícula grande", Icons.Filled.GridView),
+}
+
 private enum class Tab(val label: String) { Albums("Álbumes"), Artists("Artistas"), Songs("Canciones"), Playlists("Playlists") }
 
 @Composable
@@ -279,13 +286,16 @@ private fun HomeScreen(
             Spacer(Modifier.height(20.dp))
             SearchField(query) { query = it }
             Spacer(Modifier.height(16.dp))
-            Row(
-                Modifier.horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(22.dp),
-            ) {
-                Tab.entries.forEach { t ->
-                    TabLabel(t.label, t == tab) { tab = t }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(22.dp),
+                ) {
+                    Tab.entries.forEach { t ->
+                        TabLabel(t.label, t == tab) { tab = t }
+                    }
                 }
+                if (tab == Tab.Albums) AlbumViewMenu(vm)
             }
             if (vm.loaded && vm.songs.isEmpty()) {
                 Spacer(Modifier.height(24.dp))
@@ -300,7 +310,7 @@ private fun HomeScreen(
     val pad = PaddingValues(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 20.dp)
     val currentId = vm.currentItem?.mediaId
     when (tab) {
-        Tab.Albums -> AlbumGrid(albums, pad, header, onAlbum)
+        Tab.Albums -> AlbumGrid(albums, vm.albumView, pad, header, onAlbum)
         Tab.Artists -> LazyColumn(contentPadding = pad) {
             item { header() }
             items(artists, key = { it.name }) { artist ->
@@ -383,18 +393,72 @@ private fun songCount(n: Int) = "$n " + if (n == 1) "canción" else "canciones"
 @Composable
 private fun AlbumGrid(
     albums: List<Album>,
+    view: AlbumView,
     pad: PaddingValues,
     header: @Composable () -> Unit,
     onAlbum: (Album) -> Unit,
 ) {
     LazyVerticalGrid(
-        columns = GridCells.Adaptive(150.dp),
+        columns = when (view) {
+            AlbumView.List -> GridCells.Fixed(1)
+            AlbumView.Small -> GridCells.Adaptive(76.dp)
+            AlbumView.Medium -> GridCells.Adaptive(100.dp)
+            AlbumView.Large -> GridCells.Adaptive(150.dp)
+        },
         contentPadding = pad,
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp),
+        horizontalArrangement = Arrangement.spacedBy(if (view == AlbumView.Small) 10.dp else 14.dp),
+        verticalArrangement = Arrangement.spacedBy(
+            when (view) {
+                AlbumView.List -> 2.dp
+                AlbumView.Small -> 12.dp
+                else -> 18.dp
+            }
+        ),
     ) {
         item(span = { GridItemSpan(maxLineSpan) }) { header() }
-        items(albums, key = { it.id }) { album -> AlbumCard(album) { onAlbum(album) } }
+        items(albums, key = { it.id }) { album ->
+            if (view == AlbumView.List) AlbumListRow(album) { onAlbum(album) }
+            else AlbumCard(album, view) { onAlbum(album) }
+        }
+    }
+}
+
+@Composable
+private fun AlbumViewMenu(vm: MainViewModel) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }) {
+            Icon(vm.albumView.icon, "Cambiar vista", tint = Gray)
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            AlbumView.entries.forEach { v ->
+                DropdownMenuItem(
+                    text = { Text(v.label, fontWeight = if (v == vm.albumView) FontWeight.Bold else FontWeight.Normal) },
+                    leadingIcon = { Icon(v.icon, null) },
+                    trailingIcon = { if (v == vm.albumView) Icon(Icons.Filled.Check, null, Modifier.size(18.dp)) },
+                    onClick = { vm.changeAlbumView(v); open = false },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AlbumListRow(album: Album, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable(onClick = onClick)
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AlbumArt(album.id, Modifier.size(56.dp), sizePx = 200, shape = RoundedCornerShape(4.dp))
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(album.title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                "${album.artist} · ${songCount(album.songs.size)}",
+                fontSize = 13.sp, color = Gray, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 
@@ -441,12 +505,23 @@ private fun TabLabel(text: String, selected: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun AlbumCard(album: Album, onClick: () -> Unit) {
+private fun AlbumCard(album: Album, view: AlbumView, onClick: () -> Unit) {
+    val small = view == AlbumView.Small
     Column(Modifier.clickable(onClick = onClick)) {
-        AlbumArt(album.id, Modifier.fillMaxWidth().aspectRatio(1f))
-        Spacer(Modifier.height(8.dp))
-        Text(album.title, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text(album.artist, fontSize = 13.sp, color = Gray, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        AlbumArt(
+            album.id, Modifier.fillMaxWidth().aspectRatio(1f),
+            sizePx = if (view == AlbumView.Large) 400 else 250,
+            shape = RoundedCornerShape(if (small) 4.dp else 6.dp),
+        )
+        Spacer(Modifier.height(if (small) 5.dp else 8.dp))
+        Text(
+            album.title, fontWeight = FontWeight.SemiBold, fontSize = if (small) 12.sp else 14.sp,
+            maxLines = 1, overflow = TextOverflow.Ellipsis,
+        )
+        if (!small) Text(
+            album.artist, fontSize = if (view == AlbumView.Medium) 12.sp else 13.sp,
+            color = Gray, maxLines = 1, overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -497,6 +572,7 @@ private fun ArtistScreen(
     }
     AlbumGrid(
         albums = artist.albums,
+        view = vm.albumView,
         pad = PaddingValues(20.dp),
         header = {
             Column(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {

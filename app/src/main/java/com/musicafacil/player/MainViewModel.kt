@@ -132,6 +132,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun album(id: Long): Album? = albums.firstOrNull { it.id == id }
     fun artist(name: String): Artist? = artists.firstOrNull { artistKey(it.name) == artistKey(name) }
 
+    // --- Vista de álbumes ---
+
+    var albumView by mutableStateOf(
+        AlbumView.entries.getOrNull(
+            app.getSharedPreferences("settings", android.content.Context.MODE_PRIVATE).getInt("album_view", AlbumView.Large.ordinal)
+        ) ?: AlbumView.Large
+    )
+        private set
+
+    fun changeAlbumView(view: AlbumView) {
+        albumView = view
+        settingsPrefs.edit().putInt("album_view", view.ordinal).apply()
+    }
+
     // --- Portadas de internet ---
 
     private val settingsPrefs = app.getSharedPreferences("settings", android.content.Context.MODE_PRIVATE)

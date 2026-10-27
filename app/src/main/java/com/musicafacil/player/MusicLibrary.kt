@@ -116,7 +116,8 @@ object MusicLibrary {
                 )
             }
         }
-        return songs
+        // Repara tildes y eñes mal leídas ("TRÃ‰" -> "TRÉ")
+        return songs.map { TextFix.fix(context, it) }
     }
 
     fun groupAlbums(songs: List<Song>): List<Album> =
