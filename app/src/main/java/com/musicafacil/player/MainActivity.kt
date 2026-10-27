@@ -16,6 +16,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.clickable
@@ -44,6 +45,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.BlurEffect
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.TileMode
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.Color
@@ -158,6 +164,8 @@ private fun App(vm: MainViewModel = viewModel()) {
     var showPlayer by rememberSaveable { mutableStateOf(false) }
     var showQueue by rememberSaveable { mutableStateOf(false) }
     var showFolders by rememberSaveable { mutableStateOf(false) }
+    var reveal by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(showPlayer) { if (!showPlayer) reveal = 0f }
 
     BackHandler(enabled = showFolders || showQueue || showPlayer || openAlbumId != null || openPlaylistId != null || openArtist != null) {
         when {
@@ -192,13 +200,30 @@ private fun App(vm: MainViewModel = viewModel()) {
             when {
                 showFolders -> FoldersScreen(vm) { showFolders = false }
                 showQueue -> QueueScreen(vm) { showQueue = false }
-                showPlayer -> PlayerScreen(
-                    vm,
-                    onArtist = goArtist,
-                    onQueue = { showQueue = true },
-                    onAlbum = { openAlbumId = it; showPlayer = false },
-                    onHome = { showPlayer = false; openAlbumId = null; openPlaylistId = null; openArtist = null },
-                ) { showPlayer = false }
+                showPlayer -> Box(Modifier.fillMaxSize()) {
+                    // Al deslizar hacia arriba, debajo aparece el disco actual, de borroso a nítido
+                    val underAlbum = vm.currentItem?.mediaMetadata?.extras?.getLong(EXTRA_ALBUM_ID)?.let { vm.album(it) }
+                    val showUnder by remember { derivedStateOf { reveal > 0.001f } }
+                    if (showUnder && underAlbum != null) {
+                        Box(
+                            Modifier.fillMaxSize().graphicsLayer {
+                                alpha = reveal
+                                val r = (1f - reveal) * 28.dp.toPx()
+                                renderEffect = if (r > 0.5f) BlurEffect(r, r, TileMode.Decal) else null
+                            }
+                        ) {
+                            AlbumScreen(vm, underAlbum, onArtist = goArtist) {}
+                        }
+                    }
+                    PlayerScreen(
+                        vm,
+                        onArtist = goArtist,
+                        onQueue = { showQueue = true },
+                        onAlbum = { openAlbumId = it; showPlayer = false },
+                        onHome = { showPlayer = false; openAlbumId = null; openPlaylistId = null; openArtist = null },
+                        onReveal = { reveal = it },
+                    ) { showPlayer = false }
+                }
                 album != null -> AlbumScreen(vm, album, onArtist = goArtist) { openAlbumId = null }
                 playlist != null -> PlaylistScreen(vm, playlist) { openPlaylistId = null }
                 artist != null -> ArtistScreen(
@@ -1060,6 +1085,7 @@ private fun PlayerScreen(
     onQueue: () -> Unit,
     onAlbum: (Long) -> Unit,
     onHome: () -> Unit,
+    onReveal: (Float) -> Unit,
     onClose: () -> Unit,
 ) {
     val controller = vm.controller
@@ -1072,10 +1098,21 @@ private fun PlayerScreen(
     val scope = rememberCoroutineScope()
     val swipeX = remember { Animatable(0f) }
     val swipeY = remember { Animatable(0f) }
-    val threshold = with(LocalDensity.current) { 90.dp.toPx() }
+    val density = LocalDensity.current
+    val config = LocalConfiguration.current
+    val threshold = with(density) { 90.dp.toPx() }
+    val screenW = with(density) { config.screenWidthDp.dp.toPx() }
+    // Recorrido vertical con el que el gesto se completa del todo
+    val travelY = with(density) { config.screenHeightDp.dp.toPx() } * 0.6f
     val currentOnAlbum by rememberUpdatedState(onAlbum)
     val currentOnHome by rememberUpdatedState(onHome)
+    val currentOnReveal by rememberUpdatedState(onReveal)
     val currentAlbumId by rememberUpdatedState(albumId)
+
+    // 0 = reproductor normal, 1 = deslizado del todo hacia arriba (se ve el disco)
+    val reveal by remember { derivedStateOf { (-swipeY.value / travelY).coerceIn(0f, 1f) } }
+    LaunchedEffect(Unit) { snapshotFlow { reveal }.collect { currentOnReveal(it) } }
+
     val swipe = Modifier.pointerInput(Unit) {
         var dx = 0f
         var dy = 0f
@@ -1087,13 +1124,30 @@ private fun PlayerScreen(
             onDragStart = { dx = 0f; dy = 0f },
             onDragEnd = {
                 val horizontal = abs(dx) > abs(dy)
+                val album = currentAlbumId
                 when {
-                    horizontal && dx < -threshold -> vm.next()
-                    horizontal && dx > threshold -> vm.previousTrack()
-                    !horizontal && dy < -threshold -> currentAlbumId?.let(currentOnAlbum)
-                    !horizontal && dy > threshold -> currentOnHome()
+                    horizontal && abs(dx) > threshold -> scope.launch {
+                        val dir = if (dx < 0) -1f else 1f
+                        launch { swipeY.animateTo(0f, tween(160)) }
+                        // La portada sale por un lado…
+                        swipeX.animateTo(dir * screenW, tween(160))
+                        if (dir < 0) vm.next() else vm.previousTrack()
+                        // …y la nueva entra por el contrario
+                        swipeX.snapTo(-dir * screenW * 0.7f)
+                        swipeX.animateTo(0f, spring(stiffness = Spring.StiffnessMediumLow))
+                    }
+                    !horizontal && dy < -threshold && album != null -> scope.launch {
+                        launch { swipeX.animateTo(0f, tween(180)) }
+                        swipeY.animateTo(-travelY, tween(180))
+                        currentOnAlbum(album)
+                    }
+                    !horizontal && dy > threshold -> scope.launch {
+                        launch { swipeX.animateTo(0f, tween(180)) }
+                        swipeY.animateTo(travelY, tween(180))
+                        currentOnHome()
+                    }
+                    else -> reset()
                 }
-                reset()
             },
             onDragCancel = { reset() },
         ) { change, amount ->
@@ -1107,8 +1161,15 @@ private fun PlayerScreen(
         }
     }
 
-    Column(swipe.fillMaxSize().padding(horizontal = 28.dp, vertical = 8.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+    // El resto de la pantalla se desvanece al deslizar hacia arriba
+    val fade = Modifier.graphicsLayer { alpha = 1f - reveal }
+
+    Column(
+        swipe.fillMaxSize()
+            .drawBehind { drawRect(Black.copy(alpha = 1f - reveal)) }
+            .padding(horizontal = 28.dp, vertical = 8.dp)
+    ) {
+        Row(fade, verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onClose, Modifier.offset(x = (-12).dp)) {
                 Icon(Icons.Filled.KeyboardArrowDown, "Cerrar", Modifier.size(32.dp))
             }
@@ -1127,14 +1188,21 @@ private fun PlayerScreen(
                 .graphicsLayer {
                     val x = swipeX.value
                     val y = swipeY.value
-                    translationX = x * 0.6f
-                    translationY = y * 0.35f
-                    alpha = 1f - (maxOf(abs(x), abs(y)) / (threshold * 4)).coerceIn(0f, 0.5f)
+                    // Cuanto más se desliza, más pequeña y transparente: "desaparece"
+                    val progress = maxOf(abs(x) / screenW, abs(y) / travelY).coerceIn(0f, 1f)
+                    val scale = 1f - progress * 0.55f
+                    scaleX = scale
+                    scaleY = scale
+                    translationX = x * 0.8f
+                    translationY = y * 0.6f
+                    alpha = 1f - progress * 0.7f
+                    // Sin capa intermedia: así el halo (que se dibuja fuera de la portada) no se recorta
+                    compositingStrategy = CompositingStrategy.ModulateAlpha
                 },
         )
         Spacer(Modifier.weight(1f))
         val songId = vm.currentItem?.mediaId?.toLongOrNull()
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(fade, verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(
                     meta?.title?.toString() ?: "", style = MaterialTheme.typography.headlineSmall,
@@ -1181,6 +1249,7 @@ private fun PlayerScreen(
                 dragging = null
             },
             enabled = duration > 0,
+            modifier = fade,
             interactionSource = interaction,
             colors = sliderColors,
             thumb = {
@@ -1193,7 +1262,7 @@ private fun PlayerScreen(
                 )
             },
         )
-        Row(Modifier.fillMaxWidth()) {
+        Row(fade.fillMaxWidth()) {
             Text(formatTime(dragging?.let { (it * duration).toLong() } ?: position), fontSize = 12.sp, color = Gray)
             Spacer(Modifier.weight(1f))
             Text(formatTime(duration), fontSize = 12.sp, color = Gray)
@@ -1201,7 +1270,7 @@ private fun PlayerScreen(
         Spacer(Modifier.height(20.dp))
 
         Row(
-            Modifier.fillMaxWidth(),
+            fade.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
