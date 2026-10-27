@@ -212,6 +212,14 @@ private fun App(vm: MainViewModel = viewModel()) {
     }
     vm.whatNext?.let { WhatNextDialog(vm, it) }
 
+    // Ventana del sistema para permitir modificar los archivos FLAC
+    val writeLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { r ->
+        vm.onWritePermission(r.resultCode == android.app.Activity.RESULT_OK)
+    }
+    LaunchedEffect(vm.writeRequest) {
+        vm.writeRequest?.let { writeLauncher.launch(androidx.activity.result.IntentSenderRequest.Builder(it).build()) }
+    }
+
     val goArtist: (String) -> Unit = { openArtist = it; openAlbumId = null; showPlayer = false; showQueue = false }
 
     Scaffold(
@@ -725,13 +733,8 @@ private fun ArtistScreen(
 ) {
     var renaming by remember { mutableStateOf(false) }
     if (renaming) {
-        NameDialog(
-            "Renombrar artista", artist.name, "Guardar",
-            hint = "Si escribes el nombre de otro artista, se unirán en uno solo.",
-            onDismiss = { renaming = false },
-        ) {
-            vm.renameArtist(artist, it)
-            onRenamed(it.trim())
+        ArtistRenameDialog(vm, artist, onDismiss = { renaming = false }) {
+            onRenamed(it)
             renaming = false
         }
     }
@@ -1069,6 +1072,8 @@ private fun SongEditDialog(vm: MainViewModel, song: Song, onDone: () -> Unit) {
     var artist by remember { mutableStateOf(song.artist) }
     var album by remember { mutableStateOf(song.album) }
     var albumArtist by remember { mutableStateOf(song.albumArtist) }
+    val fileOption = song.isFlac && vm.canWriteFiles
+    var toFile by remember { mutableStateOf(fileOption) }
     AlertDialog(
         onDismissRequest = onDone,
         containerColor = Card,
@@ -1082,7 +1087,8 @@ private fun SongEditDialog(vm: MainViewModel, song: Song, onDone: () -> Unit) {
                 EditField("Artista", artist) { artist = it }
                 EditField("Álbum", album) { album = it }
                 EditField("Artista del álbum", albumArtist) { albumArtist = it }
-                Text(EDIT_NOTE, color = Gray, fontSize = 12.sp)
+                if (fileOption) FileCheckbox(toFile, "Guardar también en el archivo FLAC") { toFile = it }
+                else Text(EDIT_NOTE, color = Gray, fontSize = 12.sp)
                 Text(
                     "Restablecer valores del archivo", color = White, fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -1091,9 +1097,63 @@ private fun SongEditDialog(vm: MainViewModel, song: Song, onDone: () -> Unit) {
             }
         },
         confirmButton = {
-            TextButton(onClick = { vm.editSong(song.id, title, artist, album, albumArtist); onDone() }) { Text("Guardar") }
+            TextButton(onClick = {
+                vm.editSong(song.id, title, artist, album, albumArtist)
+                if (toFile) vm.requestFileWrite(mapOf(song.id to FlacTagWriter.Changes(title, artist, album, albumArtist)))
+                onDone()
+            }) { Text("Guardar") }
         },
         dismissButton = { TextButton(onClick = onDone) { Text("Cancelar", color = Gray) } },
+    )
+}
+
+@Composable
+private fun FileCheckbox(checked: Boolean, label: String, onChange: (Boolean) -> Unit) {
+    Column {
+        Row(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(6.dp)).clickable { onChange(!checked) },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Checkbox(
+                checked = checked, onCheckedChange = onChange,
+                colors = CheckboxDefaults.colors(checkedColor = White, checkmarkColor = Black, uncheckedColor = Gray),
+            )
+            Text(label, fontSize = 14.sp)
+        }
+        Text(
+            if (checked) "Se modifica el archivo; Android te pedirá permiso. Así también lo verán otras apps."
+            else EDIT_NOTE,
+            color = Gray, fontSize = 12.sp,
+        )
+    }
+}
+
+@Composable
+private fun ArtistRenameDialog(vm: MainViewModel, artist: Artist, onDismiss: () -> Unit, onRenamed: (String) -> Unit) {
+    var name by remember { mutableStateOf(artist.name) }
+    val flacCount = artist.songs.count { it.isFlac }
+    val fileOption = flacCount > 0 && vm.canWriteFiles
+    var toFile by remember { mutableStateOf(fileOption) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Card,
+        title = { Text("Renombrar artista") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                EditField("Nombre", name) { name = it }
+                Text("Si escribes el nombre de otro artista, se unirán en uno solo.", color = Gray, fontSize = 13.sp)
+                if (fileOption) FileCheckbox(toFile, "Guardar también en los archivos FLAC ($flacCount)") { toFile = it }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                val changes = vm.artistFileChanges(artist, name)
+                vm.renameArtist(artist, name)
+                if (toFile) vm.requestFileWrite(changes)
+                onRenamed(name.trim())
+            }, enabled = name.isNotBlank()) { Text("Guardar") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar", color = Gray) } },
     )
 }
 
@@ -1101,6 +1161,9 @@ private fun SongEditDialog(vm: MainViewModel, song: Song, onDone: () -> Unit) {
 private fun AlbumEditDialog(vm: MainViewModel, album: Album, onDone: () -> Unit) {
     var title by remember { mutableStateOf(album.title) }
     var artist by remember { mutableStateOf(album.artist) }
+    val flacCount = album.songs.count { it.isFlac }
+    val fileOption = flacCount > 0 && vm.canWriteFiles
+    var toFile by remember { mutableStateOf(fileOption) }
     AlertDialog(
         onDismissRequest = onDone,
         containerColor = Card,
@@ -1109,11 +1172,17 @@ private fun AlbumEditDialog(vm: MainViewModel, album: Album, onDone: () -> Unit)
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 EditField("Título del álbum", title) { title = it }
                 EditField("Artista del álbum", artist) { artist = it }
-                Text("Se aplica a las ${album.songs.size} canciones. $EDIT_NOTE", color = Gray, fontSize = 12.sp)
+                Text("Se aplica a las ${album.songs.size} canciones.", color = Gray, fontSize = 12.sp)
+                if (fileOption) FileCheckbox(toFile, "Guardar también en los archivos FLAC ($flacCount)") { toFile = it }
+                else Text(EDIT_NOTE, color = Gray, fontSize = 12.sp)
             }
         },
         confirmButton = {
-            TextButton(onClick = { vm.editAlbum(album, title, artist); onDone() }) { Text("Guardar") }
+            TextButton(onClick = {
+                vm.editAlbum(album, title, artist)
+                if (toFile) vm.requestFileWrite(album.songs.associate { it.id to FlacTagWriter.Changes(album = title, albumArtist = artist) })
+                onDone()
+            }) { Text("Guardar") }
         },
         dismissButton = { TextButton(onClick = onDone) { Text("Cancelar", color = Gray) } },
     )

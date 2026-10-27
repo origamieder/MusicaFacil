@@ -19,8 +19,11 @@ data class Song(
     /** MediaStore guarda disco*1000 + pista */
     val track: Int,
     val durationMs: Long,
+    /** Ruta del archivo (para saber si es FLAC y avisar al escáner tras editarlo). */
+    val path: String? = null,
 ) {
     val uri: Uri get() = songUri(id)
+    val isFlac: Boolean get() = path?.endsWith(".flac", ignoreCase = true) == true
 }
 
 data class Album(
@@ -120,6 +123,7 @@ object MusicLibrary {
                     albumId = c.getLong(albumIdCol),
                     track = c.getInt(trackCol),
                     durationMs = c.getLong(durCol),
+                    path = c.getString(dataCol),
                 )
             }
         }

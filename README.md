@@ -12,7 +12,7 @@ Reproductor de música para Android, minimalista en blanco y negro. Pensado para
 - **Gestos en el reproductor**: desliza ← siguiente, → anterior, ↓ abre el álbum (la portada vuela al mini reproductor), ↑ vuelve a la pantalla principal.
 - **Portadas de internet**: si un disco no tiene portada, se busca en iTunes y Deezer y se guarda en el móvil (se puede desactivar en Ajustes; en el menú ⋮ de un álbum puedes forzar la búsqueda).
 - **Portada con brillo**: en el reproductor, la portada irradia sus propios colores.
-- **Editar etiquetas**: menú ⋮ de una canción → "Editar información"; ⋮ en un álbum o artista para editarlo, renombrarlo o unirlo con otro. Los artistas se agrupan ignorando mayúsculas y signos ("AC/DC" = "AC-DC"). Los cambios se guardan en la app, no en los archivos.
+- **Editar etiquetas**: menú ⋮ de una canción → "Editar información"; ⋮ en un álbum o artista para editarlo, renombrarlo o unirlo con otro. Los artistas se agrupan ignorando mayúsculas y signos ("AC/DC" = "AC-DC"). Los cambios se guardan en la app y, si son FLAC, también se pueden escribir en el propio archivo (Android pide permiso).
 - **Cola**: en el reproductor, el icono de arriba a la derecha muestra lo que va a sonar. Puedes saltar a una canción, quitarla o reordenarla arrastrando (con aleatorio desactivado).
 - **Playlists**: crea las tuyas, añade canciones o álbumes enteros desde el menú ⋮, y reordénalas arrastrando ≡. Se pueden renombrar y borrar.
 - **Buscador**: filtra por álbum, artista o canción.

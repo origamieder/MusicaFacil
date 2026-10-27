@@ -254,6 +254,72 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         saveEdits(edits.copy(songs = songs))
     }
 
+    // --- Escribir etiquetas en los archivos FLAC ---
+
+    /** Permiso del sistema pendiente de pedir para modificar archivos (Android 11+). */
+    var writeRequest by mutableStateOf<android.content.IntentSender?>(null)
+        private set
+    private var pendingWrites: Map<Long, FlacTagWriter.Changes> = emptyMap()
+
+    val canWriteFiles: Boolean get() = android.os.Build.VERSION.SDK_INT >= 30
+
+    /** Pide permiso para escribir los cambios en los FLAC indicados (los no FLAC se ignoran). */
+    fun requestFileWrite(changes: Map<Long, FlacTagWriter.Changes>) {
+        if (!canWriteFiles) return
+        val flac = changes.filterKeys { rawSongs.firstOrNull { s -> s.id == it }?.isFlac == true }
+        if (flac.isEmpty()) return
+        pendingWrites = flac
+        val pi = android.provider.MediaStore.createWriteRequest(getApplication<Application>().contentResolver, flac.keys.map(::songUri))
+        writeRequest = pi.intentSender
+    }
+
+    fun onWritePermission(granted: Boolean) {
+        writeRequest = null
+        val work = pendingWrites
+        pendingWrites = emptyMap()
+        val app = getApplication<Application>()
+        if (!granted) {
+            toast("No se han modificado los archivos")
+            return
+        }
+        viewModelScope.launch {
+            val paths = ArrayList<String>()
+            var failed = 0
+            withContext(Dispatchers.IO) {
+                val byId = rawSongs.associateBy { it.id }
+                work.forEach { (id, change) ->
+                    runCatching { FlacTagWriter.write(app, songUri(id), change) }
+                        .onSuccess { byId[id]?.path?.let(paths::add) }
+                        .onFailure { failed++ }
+                }
+            }
+            // Avisa a Android para que el resto de apps vean las etiquetas nuevas
+            if (paths.isNotEmpty()) android.media.MediaScannerConnection.scanFile(app, paths.toTypedArray(), null, null)
+            toast(
+                when {
+                    failed == 0 -> "Guardado en ${paths.size} ${if (paths.size == 1) "archivo" else "archivos"}"
+                    paths.isEmpty() -> "No se pudo modificar ningún archivo"
+                    else -> "Guardado en ${paths.size}; fallaron $failed"
+                }
+            )
+        }
+    }
+
+    private fun toast(msg: String) =
+        android.widget.Toast.makeText(getApplication(), msg, android.widget.Toast.LENGTH_LONG).show()
+
+    /** Cambios de archivo para renombrar un artista: solo en las etiquetas que tenían ese artista. */
+    fun artistFileChanges(artist: Artist, newName: String): Map<Long, FlacTagWriter.Changes> {
+        val key = artistKey(artist.name)
+        val name = newName.trim()
+        return artist.songs.associate { s ->
+            s.id to FlacTagWriter.Changes(
+                artist = name.takeIf { artistKey(s.artist) == key },
+                albumArtist = name.takeIf { artistKey(s.albumArtist) == key },
+            )
+        }
+    }
+
     /** Renombra un artista; si el nombre nuevo es el de otro artista, se unen. */
     fun renameArtist(artist: Artist, newName: String) {
         val name = newName.trim()
