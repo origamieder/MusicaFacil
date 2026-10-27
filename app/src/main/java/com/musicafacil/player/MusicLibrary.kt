@@ -12,6 +12,8 @@ data class Song(
     val id: Long,
     val title: String,
     val artist: String,
+    /** Artista del álbum (etiqueta ALBUMARTIST) si existe, si no el de la pista */
+    val albumArtist: String,
     val album: String,
     val albumId: Long,
     /** MediaStore guarda disco*1000 + pista */
@@ -27,6 +29,14 @@ data class Album(
     val artist: String,
     val songs: List<Song>,
 )
+
+data class Artist(
+    val name: String,
+    val albums: List<Album>,
+) {
+    val songs: List<Song> get() = albums.flatMap { it.songs }
+    val songCount: Int get() = albums.sumOf { it.songs.size }
+}
 
 val audioCollection: Uri
     get() = if (Build.VERSION.SDK_INT >= 29) {
@@ -69,7 +79,7 @@ object MusicLibrary {
             MediaStore.Audio.Media.ALBUM_ID,
             MediaStore.Audio.Media.TRACK,
             MediaStore.Audio.Media.DURATION,
-        )
+        ) + if (Build.VERSION.SDK_INT >= 30) arrayOf(MediaStore.Audio.Media.ALBUM_ARTIST) else emptyArray()
         val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0"
         val songs = ArrayList<Song>()
         context.contentResolver.query(audioCollection, projection, selection, null, null)?.use { c ->
@@ -80,13 +90,18 @@ object MusicLibrary {
             val albumIdCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID)
             val trackCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.TRACK)
             val durCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
+            val albumArtistCol = c.getColumnIndex(MediaStore.Audio.Media.ALBUM_ARTIST)
             while (c.moveToNext()) {
+                val artist = c.getString(artistCol)
+                    ?.takeIf { it.isNotBlank() && it != MediaStore.UNKNOWN_STRING }
+                    ?: "Artista desconocido"
                 songs += Song(
                     id = c.getLong(idCol),
                     title = c.getString(titleCol)?.takeIf { it.isNotBlank() } ?: "Sin título",
-                    artist = c.getString(artistCol)
+                    artist = artist,
+                    albumArtist = albumArtistCol.takeIf { it >= 0 }?.let { c.getString(it) }
                         ?.takeIf { it.isNotBlank() && it != MediaStore.UNKNOWN_STRING }
-                        ?: "Artista desconocido",
+                        ?: artist,
                     album = c.getString(albumCol)?.takeIf { it.isNotBlank() } ?: "Álbum desconocido",
                     albumId = c.getLong(albumIdCol),
                     track = c.getInt(trackCol),
@@ -102,8 +117,13 @@ object MusicLibrary {
             .map { (id, list) ->
                 val sorted = list.sortedWith(compareBy({ it.track }, { it.title.lowercase() }))
                 // El artista más repetido del álbum (evita "Varios" por un featuring)
-                val artist = list.groupingBy { it.artist }.eachCount().maxByOrNull { it.value }!!.key
+                val artist = list.groupingBy { it.albumArtist }.eachCount().maxByOrNull { it.value }!!.key
                 Album(id, sorted.first().album, artist, sorted)
             }
             .sortedWith(compareBy({ it.artist.lowercase() }, { it.title.lowercase() }))
+
+    fun groupArtists(albums: List<Album>): List<Artist> =
+        albums.groupBy { it.artist.lowercase() }
+            .map { (_, list) -> Artist(list.first().artist, list.sortedBy { it.title.lowercase() }) }
+            .sortedBy { it.name.lowercase().removePrefix("the ") }
 }

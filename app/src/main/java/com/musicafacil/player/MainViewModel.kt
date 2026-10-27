@@ -24,6 +24,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var albums by mutableStateOf<List<Album>>(emptyList())
         private set
+    var artists by mutableStateOf<List<Artist>>(emptyList())
+        private set
     var loading by mutableStateOf(false)
         private set
     var loaded by mutableStateOf(false)
@@ -69,18 +71,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (loading) return
         loading = true
         viewModelScope.launch {
-            val (s, a) = withContext(Dispatchers.IO) {
+            val (s, a, ar) = withContext(Dispatchers.IO) {
                 val s = MusicLibrary.loadSongs(getApplication())
-                s to MusicLibrary.groupAlbums(s)
+                val a = MusicLibrary.groupAlbums(s)
+                Triple(s, a, MusicLibrary.groupArtists(a))
             }
             songs = s
             albums = a
+            artists = ar
             loading = false
             loaded = true
         }
     }
 
     fun album(id: Long): Album? = albums.firstOrNull { it.id == id }
+    fun artist(name: String): Artist? = artists.firstOrNull { it.name == name }
 
     // --- Acciones ---
 
@@ -92,6 +97,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun playAlbum(album: Album, startIndex: Int = 0, shuffle: Boolean = false) {
         val start = if (shuffle) album.songs.indices.random() else startIndex
         play(album.songs, start, shuffle)
+    }
+
+    fun playArtist(artist: Artist, shuffle: Boolean) {
+        val list = artist.songs
+        if (list.isEmpty()) return
+        play(list, if (shuffle) list.indices.random() else 0, shuffle)
     }
 
     fun playSongs(list: List<Song>, startIndex: Int) = play(list, startIndex, shuffle = false)

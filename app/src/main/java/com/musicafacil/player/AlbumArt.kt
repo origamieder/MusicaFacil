@@ -25,6 +25,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -53,7 +54,12 @@ private fun loadArt(context: Context, albumId: Long, px: Int): ImageBitmap? = tr
 
 /** Carátula del álbum (de la etiqueta del archivo o cover.jpg), con caché en memoria. */
 @Composable
-fun AlbumArt(albumId: Long?, modifier: Modifier = Modifier, sizePx: Int = 400) {
+fun AlbumArt(
+    albumId: Long?,
+    modifier: Modifier = Modifier,
+    sizePx: Int = 400,
+    shape: Shape = RoundedCornerShape(6.dp),
+) {
     val context = LocalContext.current
     val key = "$albumId@$sizePx"
     val art by produceState(initialValue = ArtCache.bitmaps.get(key), key) {
@@ -65,7 +71,7 @@ fun AlbumArt(albumId: Long?, modifier: Modifier = Modifier, sizePx: Int = 400) {
     }
     Box(
         modifier
-            .clip(RoundedCornerShape(12.dp))
+            .clip(shape)
             .background(MaterialTheme.colorScheme.surfaceVariant),
         contentAlignment = Alignment.Center,
     ) {
@@ -76,7 +82,7 @@ fun AlbumArt(albumId: Long?, modifier: Modifier = Modifier, sizePx: Int = 400) {
             Icon(
                 Icons.Filled.Album, contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.fillMaxWidth(0.5f).fillMaxHeight(0.5f),
+                modifier = Modifier.fillMaxWidth(0.4f).fillMaxHeight(0.4f),
             )
         }
     }
