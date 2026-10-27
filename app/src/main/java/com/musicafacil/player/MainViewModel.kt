@@ -121,14 +121,35 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val a = MusicLibrary.groupAlbums(s)
             Triple(s, a, MusicLibrary.groupArtists(a))
         }
+        OnlineCovers.register(a)
         songs = s
         songById = s.associateBy { it.id }
         albums = a
         artists = ar
+        ArtCache.refresh()
     }
 
     fun album(id: Long): Album? = albums.firstOrNull { it.id == id }
     fun artist(name: String): Artist? = artists.firstOrNull { artistKey(it.name) == artistKey(name) }
+
+    // --- Portadas de internet ---
+
+    private val settingsPrefs = app.getSharedPreferences("settings", android.content.Context.MODE_PRIVATE)
+    var onlineCovers by mutableStateOf(settingsPrefs.getBoolean("online_covers", true).also { OnlineCovers.enabled = it })
+        private set
+
+    fun changeOnlineCovers(enabled: Boolean) {
+        onlineCovers = enabled
+        OnlineCovers.enabled = enabled
+        settingsPrefs.edit().putBoolean("online_covers", enabled).apply()
+        if (enabled) ArtCache.refresh()
+    }
+
+    /** Vuelve a buscar en internet las portadas que no se encontraron (de todos o de un álbum). */
+    fun retryCovers(albumId: Long? = null) {
+        OnlineCovers.retryMissing(getApplication(), albumId)
+        ArtCache.refresh()
+    }
 
     // --- Carpetas ---
 
@@ -239,7 +260,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun play(list: List<Song>, startIndex: Int, shuffle: Boolean) {
         val c = controller ?: return
         c.shuffleModeEnabled = shuffle
-        c.setMediaItems(list.map { it.toMediaItem() }, startIndex, 0L)
+        // Para la notificación y la pantalla de bloqueo: usa la portada descargada si el disco no tiene
+        val app = getApplication<Application>()
+        val downloaded = list.map { it.albumId }.distinct()
+            .associateWith { id -> OnlineCovers.cachedFile(app, id)?.let { android.net.Uri.fromFile(it) } }
+        c.setMediaItems(list.map { it.toMediaItem(downloaded[it.albumId]) }, startIndex, 0L)
         c.prepare()
         c.play()
     }

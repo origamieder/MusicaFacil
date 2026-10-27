@@ -34,6 +34,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
@@ -54,7 +56,15 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-private object ArtCache {
+object ArtCache {
+    /** Al cambiar, todas las portadas se vuelven a evaluar (p. ej. tras activar la búsqueda online). */
+    var generation by mutableIntStateOf(0)
+
+    fun refresh() {
+        missing.clear()
+        generation++
+    }
+
     val bitmaps = LruCache<String, ImageBitmap>(300)
     val missing = HashSet<String>()
 }
@@ -77,11 +87,13 @@ private fun loadArt(context: Context, albumId: Long, px: Int): ImageBitmap? = tr
 fun rememberAlbumArt(albumId: Long?, sizePx: Int): ImageBitmap? {
     val context = LocalContext.current
     val key = "$albumId@$sizePx"
+    val generation = ArtCache.generation
     // El estado va ligado a la clave: al cambiar de canción se parte de cero y no se queda la portada anterior
-    val art = remember(key) { mutableStateOf(ArtCache.bitmaps.get(key)) }
-    LaunchedEffect(key) {
+    val art = remember(key, generation) { mutableStateOf(ArtCache.bitmaps.get(key)) }
+    LaunchedEffect(key, generation) {
         if (art.value == null && albumId != null && key !in ArtCache.missing) {
             val loaded = withContext(Dispatchers.IO) { loadArt(context, albumId, sizePx) }
+                ?: OnlineCovers.load(context, albumId, sizePx)
             if (loaded != null) ArtCache.bitmaps.put(key, loaded) else ArtCache.missing += key
             art.value = loaded
         }
@@ -108,12 +120,20 @@ private fun glowBitmap(art: ImageBitmap): ImageBitmap {
     return out.asImageBitmap()
 }
 
+private val GlowCache = LruCache<Long, ImageBitmap>(200)
+
 /** Portada grande con un halo de luz de sus propios colores alrededor. */
 @Composable
 fun GlowingAlbumArt(albumId: Long?, playing: Boolean, modifier: Modifier = Modifier) {
-    val art = rememberAlbumArt(albumId, 1000)
-    val glow by produceState<ImageBitmap?>(null, art) {
-        value = art?.let { withContext(Dispatchers.Default) { glowBitmap(it) } }
+    // El halo sale de la miniatura pequeña (casi siempre ya en memoria por el mini reproductor),
+    // así aparece enseguida sin esperar a la portada grande; y se guarda por álbum.
+    val small = rememberAlbumArt(albumId, 150)
+    var glow by remember { mutableStateOf(albumId?.let { GlowCache.get(it) }) }
+    LaunchedEffect(albumId, small) {
+        val cached = albumId?.let { GlowCache.get(it) }
+        glow = cached ?: small?.let { s ->
+            withContext(Dispatchers.Default) { glowBitmap(s) }.also { g -> albumId?.let { GlowCache.put(it, g) } }
+        }
     }
     val pulse by rememberInfiniteTransition(label = "glow").animateFloat(
         initialValue = 0.65f,
@@ -124,7 +144,7 @@ fun GlowingAlbumArt(albumId: Long?, playing: Boolean, modifier: Modifier = Modif
     val intensity by animateFloatAsState(if (playing) 1f else 0.55f, tween(800), label = "intensity")
 
     Box(modifier) {
-        Crossfade(targetState = glow, animationSpec = tween(700), label = "glowFade") { g ->
+        Crossfade(targetState = glow, animationSpec = tween(250), label = "glowFade") { g ->
             if (g != null) {
                 Image(
                     g, contentDescription = null,

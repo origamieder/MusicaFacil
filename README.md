@@ -9,6 +9,7 @@ Reproductor de música para Android, minimalista en blanco y negro. Pensado para
 - **Canciones**: lista de todas las canciones por orden alfabético.
 - **Favoritas**: toca ♡ en el reproductor o "Añadir a favoritas" en el menú ⋮ de cualquier canción.
 - **Gestos en el reproductor**: desliza ← siguiente, → anterior, ↑ abre el álbum, ↓ vuelve a la pantalla principal.
+- **Portadas de internet**: si un disco no tiene portada, se busca en iTunes y Deezer y se guarda en el móvil (se puede desactivar en Ajustes; en el menú ⋮ de un álbum puedes forzar la búsqueda).
 - **Portada con brillo**: en el reproductor, la portada irradia sus propios colores.
 - **Editar etiquetas**: menú ⋮ de una canción → "Editar información"; ⋮ en un álbum o artista para editarlo, renombrarlo o unirlo con otro. Los artistas se agrupan ignorando mayúsculas y signos ("AC/DC" = "AC-DC"). Los cambios se guardan en la app, no en los archivos.
 - **Cola**: en el reproductor, el icono de arriba a la derecha muestra lo que va a sonar. Puedes saltar a una canción, quitarla o reordenarla arrastrando (con aleatorio desactivado).
@@ -32,7 +33,7 @@ Requiere Android 8.1 o superior.
 Abre la carpeta con Android Studio, espera a que sincronice y pulsa ▶ con el móvil conectado.
 
 ## Dónde poner la música
-Por defecto se lee todo el móvil. Con el icono de carpeta de la pantalla principal puedes elegir una o varias carpetas concretas (se incluyen sus subcarpetas).
+Por defecto se lee todo el móvil. Con el icono de ajustes (⚙) de la pantalla principal puedes elegir una o varias carpetas concretas (se incluyen sus subcarpetas).
 Cualquier carpeta del almacenamiento del móvil o de la tarjeta SD (por ejemplo `Music/`). La app usa el índice de música de Android; si acabas de copiar archivos y no aparecen, pulsa ⟳ en la pantalla principal.
 Las carátulas salen de la imagen incrustada en los archivos (o de `cover.jpg` / `folder.jpg` en la carpeta del álbum).
 

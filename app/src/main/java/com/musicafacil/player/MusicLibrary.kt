@@ -50,7 +50,8 @@ fun songUri(id: Long): Uri = ContentUris.withAppendedId(audioCollection, id)
 fun albumArtUri(albumId: Long): Uri =
     ContentUris.withAppendedId(Uri.parse("content://media/external/audio/albumart"), albumId)
 
-fun Song.toMediaItem(): MediaItem =
+/** @param artwork portada descargada de internet, si la hay */
+fun Song.toMediaItem(artwork: Uri? = null): MediaItem =
     MediaItem.Builder()
         .setMediaId(id.toString())
         .setUri(uri)
@@ -59,13 +60,15 @@ fun Song.toMediaItem(): MediaItem =
                 .setTitle(title)
                 .setArtist(artist)
                 .setAlbumTitle(album)
-                .setArtworkUri(albumArtUri(albumId))
+                .setArtworkUri(artwork ?: albumArtUri(albumId))
                 .setExtras(android.os.Bundle().apply { putLong(EXTRA_ALBUM_ID, albumId) })
                 .build()
         )
         .build()
 
 const val EXTRA_ALBUM_ID = "album_id"
+const val UNKNOWN_ARTIST = "Artista desconocido"
+const val UNKNOWN_ALBUM = "Álbum desconocido"
 
 object MusicLibrary {
 
@@ -98,7 +101,7 @@ object MusicLibrary {
             while (c.moveToNext()) {
                 val artist = c.getString(artistCol)
                     ?.takeIf { it.isNotBlank() && it != MediaStore.UNKNOWN_STRING }
-                    ?: "Artista desconocido"
+                    ?: UNKNOWN_ARTIST
                 if (isInFolders(c.getString(dataCol), folders)) songs += Song(
                     id = c.getLong(idCol),
                     title = c.getString(titleCol)?.takeIf { it.isNotBlank() } ?: "Sin título",
@@ -106,7 +109,7 @@ object MusicLibrary {
                     albumArtist = albumArtistCol.takeIf { it >= 0 }?.let { c.getString(it) }
                         ?.takeIf { it.isNotBlank() && it != MediaStore.UNKNOWN_STRING }
                         ?: artist,
-                    album = c.getString(albumCol)?.takeIf { it.isNotBlank() } ?: "Álbum desconocido",
+                    album = c.getString(albumCol)?.takeIf { it.isNotBlank() } ?: UNKNOWN_ALBUM,
                     albumId = c.getLong(albumIdCol),
                     track = c.getInt(trackCol),
                     durationMs = c.getLong(durCol),

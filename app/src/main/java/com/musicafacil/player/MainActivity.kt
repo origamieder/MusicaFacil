@@ -272,7 +272,7 @@ private fun HomeScreen(
                     )
                 }
                 IconButton(onClick = onFolders) {
-                    Icon(Icons.Filled.FolderOpen, "Carpetas de música", tint = Gray)
+                    Icon(Icons.Filled.Settings, "Ajustes", tint = Gray)
                 }
                 Pill("Aleatorio", Icons.Filled.Shuffle, enabled = vm.songs.isNotEmpty(), onClick = vm::shuffleAll)
             }
@@ -541,6 +541,7 @@ private fun AlbumScreen(vm: MainViewModel, album: Album, onArtist: (String) -> U
                         vm.addToPlaylistRequest = album.songs.map { it.id }
                     },
                     MenuAction("Editar álbum", Icons.Filled.Edit) { editing = true },
+                    MenuAction("Buscar portada en internet", Icons.Filled.ImageSearch) { vm.retryCovers(album.id) },
                 )
             }
             Spacer(Modifier.height(12.dp))
@@ -1169,7 +1170,9 @@ private fun FoldersScreen(vm: MainViewModel, onBack: () -> Unit) {
         item {
             BackButton(onBack)
             Spacer(Modifier.height(12.dp))
-            Text("Carpetas de música", style = MaterialTheme.typography.headlineSmall)
+            Text("Ajustes", style = MaterialTheme.typography.headlineSmall)
+            Spacer(Modifier.height(20.dp))
+            SectionLabel("CARPETAS DE MÚSICA")
             Spacer(Modifier.height(6.dp))
             Text(
                 if (vm.folders.isEmpty()) "Ahora se lee la música de todo el móvil. Elige una o varias carpetas para leer solo de ahí (incluye sus subcarpetas)."
@@ -1202,6 +1205,34 @@ private fun FoldersScreen(vm: MainViewModel, onBack: () -> Unit) {
                 if (vm.loading) "Buscando música…" else "${vm.songs.size} canciones en la biblioteca",
                 color = DarkGray, fontSize = 13.sp,
             )
+            Spacer(Modifier.height(32.dp))
+            SectionLabel("PORTADAS")
+            Spacer(Modifier.height(8.dp))
+            Row(
+                Modifier.fillMaxWidth().clickable { vm.changeOnlineCovers(!vm.onlineCovers) }.padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Buscar portadas en internet", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Si un disco no tiene portada, se busca en iTunes y Deezer y se guarda en el móvil.",
+                        color = Gray, fontSize = 13.sp,
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Switch(
+                    checked = vm.onlineCovers,
+                    onCheckedChange = vm::changeOnlineCovers,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Black, checkedTrackColor = White,
+                        uncheckedThumbColor = Gray, uncheckedTrackColor = Card, uncheckedBorderColor = DarkGray,
+                    ),
+                )
+            }
+            if (vm.onlineCovers) {
+                Spacer(Modifier.height(12.dp))
+                Pill("Reintentar las que faltan", Icons.Filled.Refresh) { vm.retryCovers() }
+            }
         }
     }
 }
