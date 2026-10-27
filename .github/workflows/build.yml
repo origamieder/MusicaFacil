@@ -20,5 +20,5 @@ jobs:
           ./gradlew assembleRelease
       - uses: actions/upload-artifact@v4
         with:
-          name: MusicaFacil-apk
+          name: EDplayer-apk
           path: app/build/outputs/apk/release/*.apk

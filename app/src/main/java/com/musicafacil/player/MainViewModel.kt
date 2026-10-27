@@ -14,6 +14,8 @@ import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -30,6 +32,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var loaded by mutableStateOf(false)
         private set
+    private var songById: Map<Long, Song> = emptyMap()
+
+    // --- Favoritas y playlists ---
+    private val store = PlaylistStore(app)
+    var playlists by mutableStateOf<List<Playlist>>(emptyList())
+        private set
+    private var saveJob: Job? = null
+
+    /** Canciones pendientes de añadir a una playlist (abre el diálogo). */
+    var addToPlaylistRequest by mutableStateOf<List<Long>?>(null)
 
     // --- Estado del reproductor ---
     var controller by mutableStateOf<MediaController?>(null)
@@ -52,6 +64,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     ).buildAsync()
 
     init {
+        viewModelScope.launch {
+            playlists = withContext(Dispatchers.IO) { store.load() }
+        }
         controllerFuture.addListener({
             val c = controllerFuture.get()
             c.addListener(listener)
@@ -77,6 +92,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 Triple(s, a, MusicLibrary.groupArtists(a))
             }
             songs = s
+            songById = s.associateBy { it.id }
             albums = a
             artists = ar
             loading = false
@@ -139,7 +155,71 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // --- Playlists ---
+
+    fun playlist(id: Long): Playlist? = playlists.firstOrNull { it.id == id }
+
+    /** Canciones de la playlist que siguen existiendo en el móvil. */
+    fun songsOf(playlist: Playlist): List<Song> = playlist.songIds.mapNotNull { songById[it] }
+
+    val favorites: Playlist? get() = playlist(FAVORITES_ID)
+
+    fun isFavorite(songId: Long?): Boolean =
+        songId != null && favorites?.songIds?.contains(songId) == true
+
+    fun toggleFavorite(songId: Long) {
+        if (isFavorite(songId)) removeFromPlaylist(FAVORITES_ID, songId)
+        else addToPlaylist(FAVORITES_ID, listOf(songId))
+    }
+
+    fun createPlaylist(name: String, songIds: List<Long> = emptyList()): Long {
+        val id = System.currentTimeMillis()
+        update(playlists + Playlist(id, name.trim().ifEmpty { "Nueva playlist" }, songIds.distinct()))
+        return id
+    }
+
+    fun renamePlaylist(id: Long, name: String) = edit(id) { it.copy(name = name.trim().ifEmpty { it.name }) }
+
+    fun deletePlaylist(id: Long) {
+        if (id != FAVORITES_ID) update(playlists.filter { it.id != id })
+    }
+
+    fun addToPlaylist(id: Long, songIds: List<Long>) = edit(id) { p ->
+        p.copy(songIds = p.songIds + songIds.filter { it !in p.songIds }.distinct())
+    }
+
+    fun removeFromPlaylist(id: Long, songId: Long) = edit(id) { p ->
+        p.copy(songIds = p.songIds - songId)
+    }
+
+    fun moveInPlaylist(id: Long, fromSongId: Long, toSongId: Long) = edit(id) { p ->
+        val list = p.songIds.toMutableList()
+        val from = list.indexOf(fromSongId)
+        val to = list.indexOf(toSongId)
+        if (from < 0 || to < 0) p else p.copy(songIds = list.apply { add(to, removeAt(from)) })
+    }
+
+    fun playPlaylist(playlist: Playlist, startIndex: Int = 0, shuffle: Boolean = false) {
+        val list = songsOf(playlist)
+        if (list.isEmpty()) return
+        play(list, if (shuffle) list.indices.random() else startIndex, shuffle)
+    }
+
+    private fun edit(id: Long, change: (Playlist) -> Playlist) =
+        update(playlists.map { if (it.id == id) change(it) else it })
+
+    private fun update(newList: List<Playlist>) {
+        playlists = newList
+        // Guardado con pequeño retardo: al arrastrar canciones llegan muchos cambios seguidos
+        saveJob?.cancel()
+        saveJob = viewModelScope.launch {
+            delay(400)
+            withContext(Dispatchers.IO) { store.save(newList) }
+        }
+    }
+
     override fun onCleared() {
+        saveJob?.let { if (it.isActive) store.save(playlists) }
         controller?.removeListener(listener)
         MediaController.releaseFuture(controllerFuture)
     }

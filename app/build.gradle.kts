@@ -52,4 +52,6 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.10.1")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.0")
     implementation("androidx.core:core-ktx:1.16.0")
+    // Arrastrar para reordenar listas
+    implementation("sh.calvin.reorderable:reorderable:2.4.3")
 }

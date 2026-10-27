@@ -16,7 +16,10 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -27,7 +30,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -50,6 +53,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.C
 import androidx.media3.common.Player
 import kotlinx.coroutines.delay
+import sh.calvin.reorderable.ReorderableItem
+import sh.calvin.reorderable.rememberReorderableLazyListState
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -108,7 +113,7 @@ private fun hasAudioPermission(ctx: Context) =
 
 // ---------------------------------------------------------------- Navegación
 
-private enum class Tab(val label: String) { Albums("Álbumes"), Artists("Artistas"), Songs("Canciones") }
+private enum class Tab(val label: String) { Albums("Álbumes"), Artists("Artistas"), Songs("Canciones"), Playlists("Playlists") }
 
 @Composable
 private fun App(vm: MainViewModel = viewModel()) {
@@ -132,14 +137,20 @@ private fun App(vm: MainViewModel = viewModel()) {
 
     var openArtist by rememberSaveable { mutableStateOf<String?>(null) }
     var openAlbumId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var openPlaylistId by rememberSaveable { mutableStateOf<Long?>(null) }
     var showPlayer by rememberSaveable { mutableStateOf(false) }
 
-    BackHandler(enabled = showPlayer || openAlbumId != null || openArtist != null) {
+    BackHandler(enabled = showPlayer || openAlbumId != null || openPlaylistId != null || openArtist != null) {
         when {
             showPlayer -> showPlayer = false
             openAlbumId != null -> openAlbumId = null
+            openPlaylistId != null -> openPlaylistId = null
             else -> openArtist = null
         }
+    }
+
+    vm.addToPlaylistRequest?.let { ids ->
+        AddToPlaylistDialog(vm, ids) { vm.addToPlaylistRequest = null }
     }
 
     val goArtist: (String) -> Unit = { openArtist = it; openAlbumId = null; showPlayer = false }
@@ -153,11 +164,18 @@ private fun App(vm: MainViewModel = viewModel()) {
         Box(Modifier.padding(padding).fillMaxSize()) {
             val album = openAlbumId?.let { vm.album(it) }
             val artist = openArtist?.let { vm.artist(it) }
+            val playlist = openPlaylistId?.let { vm.playlist(it) }
             when {
                 showPlayer -> PlayerScreen(vm, onArtist = goArtist) { showPlayer = false }
                 album != null -> AlbumScreen(vm, album, onArtist = goArtist) { openAlbumId = null }
+                playlist != null -> PlaylistScreen(vm, playlist) { openPlaylistId = null }
                 artist != null -> ArtistScreen(vm, artist, onAlbum = { openAlbumId = it.id }) { openArtist = null }
-                else -> HomeScreen(vm, onAlbum = { openAlbumId = it.id }, onArtist = goArtist)
+                else -> HomeScreen(
+                    vm,
+                    onAlbum = { openAlbumId = it.id },
+                    onArtist = goArtist,
+                    onPlaylist = { openPlaylistId = it },
+                )
             }
         }
     }
@@ -180,7 +198,19 @@ private fun PermissionScreen(onAsk: () -> Unit) {
 // ---------------------------------------------------------------- Inicio
 
 @Composable
-private fun HomeScreen(vm: MainViewModel, onAlbum: (Album) -> Unit, onArtist: (String) -> Unit) {
+private fun HomeScreen(
+    vm: MainViewModel,
+    onAlbum: (Album) -> Unit,
+    onArtist: (String) -> Unit,
+    onPlaylist: (Long) -> Unit,
+) {
+    var creating by remember { mutableStateOf(false) }
+    if (creating) {
+        NameDialog("Nueva playlist", "", "Crear", onDismiss = { creating = false }) {
+            onPlaylist(vm.createPlaylist(it))
+            creating = false
+        }
+    }
     var query by rememberSaveable { mutableStateOf("") }
     var tab by rememberSaveable { mutableStateOf(Tab.Albums) }
     val q = query.trim().lowercase()
@@ -215,7 +245,10 @@ private fun HomeScreen(vm: MainViewModel, onAlbum: (Album) -> Unit, onArtist: (S
             Spacer(Modifier.height(20.dp))
             SearchField(query) { query = it }
             Spacer(Modifier.height(16.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+            Row(
+                Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(22.dp),
+            ) {
                 Tab.entries.forEach { t ->
                     TabLabel(t.label, t == tab) { tab = t }
                 }
@@ -247,13 +280,71 @@ private fun HomeScreen(vm: MainViewModel, onAlbum: (Album) -> Unit, onArtist: (S
                     leading = { AlbumArt(song.albumId, Modifier.size(44.dp), sizePx = 150, shape = RoundedCornerShape(4.dp)) },
                     title = song.title,
                     subtitle = "${song.artist} · ${song.album}",
-                    trailing = formatTime(song.durationMs),
                     playing = song.id.toString() == currentId,
-                ) { vm.playSongs(songs, i) }
+                    onClick = { vm.playSongs(songs, i) },
+                ) {
+                    Duration(song)
+                    SongMenu(vm, song)
+                }
+            }
+        }
+        Tab.Playlists -> LazyColumn(contentPadding = pad) {
+            item { header() }
+            items(vm.playlists, key = { it.id }) { p ->
+                PlaylistRow(vm, p) { onPlaylist(p.id) }
+            }
+            item {
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable { creating = true }
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(
+                        Modifier.size(56.dp).clip(RoundedCornerShape(6.dp)).background(Card),
+                        contentAlignment = Alignment.Center,
+                    ) { Icon(Icons.Filled.Add, null, tint = White) }
+                    Spacer(Modifier.width(14.dp))
+                    Text("Nueva playlist", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                }
             }
         }
     }
 }
+
+@Composable
+private fun PlaylistCover(vm: MainViewModel, playlist: Playlist, modifier: Modifier) {
+    val first = vm.songsOf(playlist).firstOrNull()
+    if (playlist.isFavorites || first == null) {
+        Box(modifier.clip(RoundedCornerShape(6.dp)).background(Card), contentAlignment = Alignment.Center) {
+            Icon(
+                if (playlist.isFavorites) Icons.Filled.Favorite else Icons.AutoMirrored.Filled.QueueMusic,
+                null, Modifier.fillMaxSize(0.4f), tint = White,
+            )
+        }
+    } else {
+        AlbumArt(first.albumId, modifier, sizePx = 200)
+    }
+}
+
+@Composable
+private fun PlaylistRow(vm: MainViewModel, playlist: Playlist, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable(onClick = onClick)
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        PlaylistCover(vm, playlist, Modifier.size(56.dp))
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(playlist.name, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(songCount(vm.songsOf(playlist).size), fontSize = 13.sp, color = Gray)
+        }
+        Icon(Icons.Filled.ChevronRight, null, tint = DarkGray)
+    }
+}
+
+private fun songCount(n: Int) = "$n " + if (n == 1) "canción" else "canciones"
+
 
 @Composable
 private fun AlbumGrid(
@@ -398,6 +489,9 @@ private fun AlbumScreen(vm: MainViewModel, album: Album, onArtist: (String) -> U
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Pill("Reproducir", Icons.Filled.PlayArrow, filled = true) { vm.playAlbum(album) }
                 Pill("Aleatorio", Icons.Filled.Shuffle) { vm.playAlbum(album, shuffle = true) }
+                RoundIcon(Icons.AutoMirrored.Filled.PlaylistAdd, "Añadir álbum a playlist") {
+                    vm.addToPlaylistRequest = album.songs.map { it.id }
+                }
             }
             Spacer(Modifier.height(16.dp))
         }
@@ -415,9 +509,12 @@ private fun AlbumScreen(vm: MainViewModel, album: Album, onArtist: (String) -> U
                 },
                 title = song.title,
                 subtitle = song.artist.takeIf { it != album.artist },
-                trailing = formatTime(song.durationMs),
                 playing = playing,
-            ) { vm.playAlbum(album, startIndex = i) }
+                onClick = { vm.playAlbum(album, startIndex = i) },
+            ) {
+                Duration(song)
+                SongMenu(vm, song)
+            }
         }
     }
 }
@@ -427,13 +524,14 @@ private fun SongRow(
     leading: @Composable () -> Unit,
     title: String,
     subtitle: String?,
-    trailing: String,
     playing: Boolean,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    trailing: @Composable RowScope.() -> Unit,
 ) {
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable(onClick = onClick)
-            .padding(vertical = 9.dp),
+        modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable(onClick = onClick)
+            .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         leading()
@@ -447,9 +545,232 @@ private fun SongRow(
             if (subtitle != null) Text(subtitle, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 13.sp, color = Gray)
         }
         Spacer(Modifier.width(10.dp))
-        Text(trailing, fontSize = 13.sp, color = Gray)
+        trailing()
     }
 }
+
+@Composable
+private fun Duration(song: Song) {
+    Text(formatTime(song.durationMs), fontSize = 13.sp, color = Gray)
+}
+
+/** Menú ⋮ de cada canción: favoritas, añadir a playlist, quitar de la playlist. */
+@Composable
+private fun SongMenu(vm: MainViewModel, song: Song, playlistId: Long? = null) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }, Modifier.size(40.dp)) {
+            Icon(Icons.Filled.MoreVert, "Opciones", Modifier.size(20.dp), tint = Gray)
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            val fav = vm.isFavorite(song.id)
+            DropdownMenuItem(
+                text = { Text(if (fav) "Quitar de favoritas" else "Añadir a favoritas") },
+                leadingIcon = { Icon(if (fav) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, null) },
+                onClick = { vm.toggleFavorite(song.id); open = false },
+            )
+            DropdownMenuItem(
+                text = { Text("Añadir a playlist") },
+                leadingIcon = { Icon(Icons.AutoMirrored.Filled.PlaylistAdd, null) },
+                onClick = { vm.addToPlaylistRequest = listOf(song.id); open = false },
+            )
+            if (playlistId != null && playlistId != FAVORITES_ID) {
+                DropdownMenuItem(
+                    text = { Text("Quitar de esta playlist") },
+                    leadingIcon = { Icon(Icons.Filled.RemoveCircleOutline, null) },
+                    onClick = { vm.removeFromPlaylist(playlistId, song.id); open = false },
+                )
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- Playlist
+
+@Composable
+private fun PlaylistScreen(vm: MainViewModel, playlist: Playlist, onBack: () -> Unit) {
+    val songs = vm.songsOf(playlist)
+    val currentId = vm.currentItem?.mediaId
+    var menu by remember { mutableStateOf(false) }
+    var renaming by remember { mutableStateOf(false) }
+    var deleting by remember { mutableStateOf(false) }
+
+    if (renaming) {
+        NameDialog("Renombrar", playlist.name, "Guardar", onDismiss = { renaming = false }) {
+            vm.renamePlaylist(playlist.id, it)
+            renaming = false
+        }
+    }
+    if (deleting) {
+        AlertDialog(
+            onDismissRequest = { deleting = false },
+            containerColor = Card,
+            title = { Text("¿Eliminar \"${playlist.name}\"?") },
+            text = { Text("Las canciones no se borran del móvil.", color = Gray) },
+            confirmButton = {
+                TextButton(onClick = { deleting = false; vm.deletePlaylist(playlist.id); onBack() }) { Text("Eliminar") }
+            },
+            dismissButton = { TextButton(onClick = { deleting = false }) { Text("Cancelar", color = Gray) } },
+        )
+    }
+
+    val listState = rememberLazyListState()
+    val reorder = rememberReorderableLazyListState(listState) { from, to ->
+        val f = from.key as? Long
+        val t = to.key as? Long
+        if (f != null && t != null) vm.moveInPlaylist(playlist.id, f, t)
+    }
+
+    LazyColumn(state = listState, contentPadding = PaddingValues(20.dp)) {
+        item(key = "header") {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                BackButton(onBack)
+                Spacer(Modifier.weight(1f))
+                if (!playlist.isFavorites) Box {
+                    IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, "Opciones") }
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Renombrar") },
+                            leadingIcon = { Icon(Icons.Filled.Edit, null) },
+                            onClick = { menu = false; renaming = true },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Eliminar playlist") },
+                            leadingIcon = { Icon(Icons.Filled.Delete, null) },
+                            onClick = { menu = false; deleting = true },
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                PlaylistCover(vm, playlist, Modifier.size(96.dp))
+                Spacer(Modifier.width(16.dp))
+                Column {
+                    Text(playlist.name, style = MaterialTheme.typography.headlineSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        songCount(songs.size) + if (songs.isNotEmpty()) " · ${formatTime(songs.sumOf { it.durationMs })}" else "",
+                        color = Gray, style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+            if (songs.isEmpty()) {
+                Text(
+                    if (playlist.isFavorites) "Aún no tienes favoritas. Toca ♡ en el reproductor o ⋮ en cualquier canción."
+                    else "Playlist vacía. Añade canciones con el menú ⋮ de cualquier canción.",
+                    color = Gray,
+                )
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Pill("Reproducir", Icons.Filled.PlayArrow, filled = true) { vm.playPlaylist(playlist) }
+                    Pill("Aleatorio", Icons.Filled.Shuffle) { vm.playPlaylist(playlist, shuffle = true) }
+                }
+                Spacer(Modifier.height(8.dp))
+                Text("Arrastra ≡ para cambiar el orden", color = DarkGray, fontSize = 12.sp)
+            }
+            Spacer(Modifier.height(12.dp))
+        }
+        itemsIndexed(songs, key = { _, s -> s.id }) { i, song ->
+            ReorderableItem(reorder, key = song.id) { dragging ->
+                SongRow(
+                    leading = { AlbumArt(song.albumId, Modifier.size(44.dp), sizePx = 150, shape = RoundedCornerShape(4.dp)) },
+                    title = song.title,
+                    subtitle = song.artist,
+                    playing = song.id.toString() == currentId,
+                    onClick = { vm.playPlaylist(playlist, startIndex = i) },
+                    modifier = Modifier.background(if (dragging) Card else Black, RoundedCornerShape(8.dp)),
+                ) {
+                    SongMenu(vm, song, playlist.id)
+                    Icon(
+                        Icons.Filled.DragHandle, "Mover",
+                        Modifier.draggableHandle().size(40.dp).padding(8.dp),
+                        tint = Gray,
+                    )
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- Diálogos
+
+@Composable
+private fun NameDialog(
+    title: String,
+    initial: String,
+    confirm: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var name by remember { mutableStateOf(initial) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Card,
+        title = { Text(title) },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                singleLine = true,
+                placeholder = { Text("Nombre", color = Gray) },
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = White, unfocusedBorderColor = DarkGray, cursorColor = White,
+                ),
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(name) }, enabled = name.isNotBlank()) { Text(confirm) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar", color = Gray) } },
+    )
+}
+
+@Composable
+private fun AddToPlaylistDialog(vm: MainViewModel, songIds: List<Long>, onDone: () -> Unit) {
+    var creating by remember { mutableStateOf(false) }
+    if (creating) {
+        NameDialog("Nueva playlist", "", "Crear", onDismiss = onDone) {
+            vm.createPlaylist(it, songIds)
+            onDone()
+        }
+        return
+    }
+    AlertDialog(
+        onDismissRequest = onDone,
+        containerColor = Card,
+        title = { Text("Añadir a playlist") },
+        text = {
+            LazyColumn(Modifier.heightIn(max = 380.dp)) {
+                item { DialogRow(Icons.Filled.Add, "Nueva playlist") { creating = true } }
+                items(vm.playlists, key = { it.id }) { p ->
+                    DialogRow(
+                        if (p.isFavorites) Icons.Filled.Favorite else Icons.AutoMirrored.Filled.QueueMusic,
+                        p.name,
+                    ) {
+                        vm.addToPlaylist(p.id, songIds)
+                        onDone()
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDone) { Text("Cancelar", color = Gray) } },
+    )
+}
+
+@Composable
+private fun DialogRow(icon: ImageVector, text: String, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable(onClick = onClick)
+            .padding(vertical = 12.dp, horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, Modifier.size(22.dp), tint = White)
+        Spacer(Modifier.width(14.dp))
+        Text(text, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
 
 // ---------------------------------------------------------------- Reproductor
 
@@ -529,20 +850,39 @@ private fun PlayerScreen(vm: MainViewModel, onArtist: (String) -> Unit, onClose:
             shape = RoundedCornerShape(8.dp),
         )
         Spacer(Modifier.weight(1f))
-        Text(
-            meta?.title?.toString() ?: "", style = MaterialTheme.typography.headlineSmall,
-            maxLines = 2, overflow = TextOverflow.Ellipsis,
-        )
-        Spacer(Modifier.height(2.dp))
-        val artist = meta?.artist?.toString() ?: ""
-        Text(
-            artist, fontSize = 16.sp, color = Gray, maxLines = 1, overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.clickable(enabled = artist.isNotEmpty()) {
-                // Abre el artista del álbum si existe, si no el de la pista
-                val albumId = meta?.extras?.getLong(EXTRA_ALBUM_ID)
-                onArtist(albumId?.let { vm.album(it)?.artist } ?: artist)
-            },
-        )
+        val songId = vm.currentItem?.mediaId?.toLongOrNull()
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    meta?.title?.toString() ?: "", style = MaterialTheme.typography.headlineSmall,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(2.dp))
+                val artist = meta?.artist?.toString() ?: ""
+                Text(
+                    artist, fontSize = 16.sp, color = Gray, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.clickable(enabled = artist.isNotEmpty()) {
+                        // Abre el artista del álbum si existe, si no el de la pista
+                        val albumId = meta?.extras?.getLong(EXTRA_ALBUM_ID)
+                        onArtist(albumId?.let { vm.album(it)?.artist } ?: artist)
+                    },
+                )
+            }
+            if (songId != null) {
+                IconButton(onClick = { vm.addToPlaylistRequest = listOf(songId) }) {
+                    Icon(Icons.AutoMirrored.Filled.PlaylistAdd, "Añadir a playlist", tint = Gray)
+                }
+                val fav = vm.isFavorite(songId)
+                IconButton(onClick = { vm.toggleFavorite(songId) }, Modifier.offset(x = 8.dp)) {
+                    Icon(
+                        if (fav) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                        if (fav) "Quitar de favoritas" else "Añadir a favoritas",
+                        tint = if (fav) White else Gray,
+                    )
+                }
+            }
+        }
+
         Spacer(Modifier.height(20.dp))
 
         val fraction = if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f
@@ -639,6 +979,14 @@ private fun Pill(
             content = content,
         )
     }
+}
+
+@Composable
+private fun RoundIcon(icon: ImageVector, description: String, onClick: () -> Unit) {
+    OutlinedIconButton(
+        onClick = onClick, modifier = Modifier.size(38.dp),
+        border = BorderStroke(1.dp, Color(0xFF5A5A5A)),
+    ) { Icon(icon, description, Modifier.size(18.dp), tint = White) }
 }
 
 @Composable
