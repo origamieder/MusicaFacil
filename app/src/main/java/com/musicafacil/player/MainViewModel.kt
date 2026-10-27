@@ -146,6 +146,24 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     )
         private set
 
+    /** Semilla del orden aleatorio de los álbumes: fija mientras dura la sesión. */
+    var albumShuffleSeed by mutableStateOf(kotlin.random.Random.nextLong())
+        private set
+
+    fun reshuffleAlbums() {
+        albumShuffleSeed = kotlin.random.Random.nextLong()
+    }
+
+    /** Álbumes mezclados; el orden de cada disco depende solo de su id y la semilla, así no se descoloca al editar. */
+    fun shuffledAlbums(): List<Album> {
+        val seed = albumShuffleSeed
+        return albums.sortedBy { a ->
+            var x = (a.id xor seed) * -7046029254386353131L
+            x = x xor (x ushr 31)
+            x
+        }
+    }
+
     fun changeAlbumView(view: AlbumView) {
         albumView = view
         settingsPrefs.edit().putInt("album_view", view.ordinal).apply()

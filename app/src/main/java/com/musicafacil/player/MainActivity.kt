@@ -19,6 +19,12 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.horizontalScroll
@@ -299,9 +305,14 @@ private fun HomeScreen(
     var tab by rememberSaveable { mutableStateOf(Tab.Albums) }
     val q = query.trim().lowercase()
 
-    val albums = remember(vm.albums, q) {
-        if (q.isEmpty()) vm.albums
-        else vm.albums.filter { q in it.title.lowercase() || q in it.artist.lowercase() }
+    var letter by rememberSaveable { mutableStateOf<Char?>(null) }
+    val shuffled = remember(vm.albums, vm.albumShuffleSeed) { vm.shuffledAlbums() }
+    val availableLetters = remember(vm.albums) { vm.albums.map { indexLetter(it.title) }.toSet() }
+    val albums = remember(shuffled, q, letter) {
+        shuffled.filter {
+            (q.isEmpty() || q in it.title.lowercase() || q in it.artist.lowercase()) &&
+                (letter == null || indexLetter(it.title) == letter)
+        }
     }
     val artists = remember(vm.artists, q) {
         if (q.isEmpty()) vm.artists else vm.artists.filter { q in it.name.lowercase() }
@@ -343,6 +354,16 @@ private fun HomeScreen(
                 }
                 if (tab == Tab.Albums) AlbumViewMenu(vm)
             }
+            if (tab == Tab.Albums && letter != null) {
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        if (albums.isEmpty()) "Ningún disco empieza por «$letter»" else "Discos que empiezan por «$letter»",
+                        color = Gray, fontSize = 13.sp, modifier = Modifier.weight(1f),
+                    )
+                    Pill("Todos", Icons.Filled.Close) { letter = null }
+                }
+            }
             if (vm.loaded && vm.songs.isEmpty()) {
                 Spacer(Modifier.height(24.dp))
                 Text(
@@ -356,7 +377,17 @@ private fun HomeScreen(
     val pad = PaddingValues(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 20.dp)
     val currentId = vm.currentItem?.mediaId
     when (tab) {
-        Tab.Albums -> AlbumGrid(albums, vm.albumView, pad, header, onAlbum)
+        Tab.Albums -> Box(Modifier.fillMaxSize()) {
+            // Algo más de margen a la derecha para la barra de letras
+            AlbumGrid(albums, vm.albumView, PaddingValues(start = 20.dp, end = 30.dp, top = 20.dp, bottom = 20.dp), header, onAlbum)
+            // Índice de letras en el borde derecho (debajo de la cabecera)
+            LetterScrubber(
+                available = availableLetters,
+                selected = letter,
+                onSelect = { letter = it },
+                modifier = Modifier.align(Alignment.TopEnd).padding(top = 236.dp, bottom = 12.dp).fillMaxHeight(),
+            )
+        }
         Tab.Artists -> LazyColumn(contentPadding = pad) {
             item { header() }
             items(artists, key = { it.name }) { artist ->
@@ -484,6 +515,94 @@ private fun AlbumViewMenu(vm: MainViewModel) {
                     trailingIcon = { if (v == vm.albumView) Icon(Icons.Filled.Check, null, Modifier.size(18.dp)) },
                     onClick = { vm.changeAlbumView(v); open = false },
                 )
+            }
+            HorizontalDivider(color = Line)
+            DropdownMenuItem(
+                text = { Text("Mezclar de nuevo") },
+                leadingIcon = { Icon(Icons.Filled.Shuffle, null) },
+                onClick = { vm.reshuffleAlbums(); open = false },
+            )
+        }
+    }
+}
+
+private val IndexLetters = listOf('#') + ('A'..'Z')
+
+/** Barra de letras del borde derecho: tocar o deslizar elige la letra; tocar la misma la quita. */
+@Composable
+private fun LetterScrubber(
+    available: Set<Char>,
+    selected: Char?,
+    onSelect: (Char?) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val haptic = LocalHapticFeedback.current
+    val currentSelected by rememberUpdatedState(selected)
+    val currentOnSelect by rememberUpdatedState(onSelect)
+    var height by remember { mutableIntStateOf(1) }
+    var dragging by remember { mutableStateOf<Char?>(null) }
+    var dragY by remember { mutableFloatStateOf(0f) }
+
+    fun letterAt(y: Float) =
+        IndexLetters[((y / height) * IndexLetters.size).toInt().coerceIn(0, IndexLetters.lastIndex)]
+
+    fun pick(l: Char) {
+        if (l != dragging) {
+            dragging = l
+            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            currentOnSelect(l)
+        }
+    }
+
+    Box(modifier) {
+        Column(
+            Modifier.fillMaxHeight().width(24.dp)
+                .onSizeChanged { height = it.height.coerceAtLeast(1) }
+                .pointerInput(Unit) {
+                    detectTapGestures { o ->
+                        val l = letterAt(o.y)
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        currentOnSelect(if (l == currentSelected) null else l)
+                    }
+                }
+                .pointerInput(Unit) {
+                    detectVerticalDragGestures(
+                        onDragStart = { o -> dragY = o.y; pick(letterAt(o.y)) },
+                        onDragEnd = { dragging = null },
+                        onDragCancel = { dragging = null },
+                    ) { change, _ ->
+                        change.consume()
+                        dragY = change.position.y
+                        pick(letterAt(change.position.y))
+                    }
+                },
+            verticalArrangement = Arrangement.SpaceEvenly,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            IndexLetters.forEach { l ->
+                Text(
+                    l.toString(),
+                    fontSize = 10.sp,
+                    fontWeight = if (l == selected) FontWeight.Black else FontWeight.SemiBold,
+                    color = when {
+                        l == selected -> White
+                        l in available -> Gray
+                        else -> Color(0xFF333333)
+                    },
+                )
+            }
+        }
+        // Letra grande junto al dedo mientras se desliza
+        dragging?.let { l ->
+            val density = LocalDensity.current
+            Box(
+                Modifier
+                    .offset { IntOffset(with(density) { (-76).dp.roundToPx() }, (dragY - with(density) { 28.dp.toPx() }).toInt()) }
+                    .size(56.dp)
+                    .background(White, CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(l.toString(), color = Black, fontSize = 28.sp, fontWeight = FontWeight.Bold)
             }
         }
     }

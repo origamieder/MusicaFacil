@@ -67,6 +67,13 @@ fun Song.toMediaItem(artwork: Uri? = null): MediaItem =
         .build()
 
 const val EXTRA_ALBUM_ID = "album_id"
+/** Letra del índice lateral: primera letra sin tilde ("Ábbey" -> A); números y símbolos -> '#'. */
+fun indexLetter(title: String): Char {
+    val c = java.text.Normalizer.normalize(title, java.text.Normalizer.Form.NFD)
+        .firstOrNull { it.isLetterOrDigit() }?.uppercaseChar() ?: return '#'
+    return if (c in 'A'..'Z') c else '#'
+}
+
 const val UNKNOWN_ARTIST = "Artista desconocido"
 const val UNKNOWN_ALBUM = "Álbum desconocido"
 
