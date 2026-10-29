@@ -5,7 +5,7 @@ Reproductor de música para Android, minimalista en blanco y negro. Pensado para
 ## Qué hace
 - **Todo en aleatorio**: un botón grande reproduce toda tu biblioteca mezclada.
 - **Álbumes**: en orden aleatorio, en lista o en cuadrícula pequeña, mediana o grande (botón junto a las pestañas). La barra de letras del borde derecho filtra por la letra inicial. Tocas uno y eliges **Reproducir** o **Aleatorio**, o tocas una canción para empezar por ella.
-- **Artistas**: lista de artistas (usa la etiqueta *Album Artist* si existe); cada uno con sus álbumes y botones de reproducir/aleatorio.
+- **Artistas**: lista de artistas (usa la etiqueta *Album Artist* si existe); cada uno con sus álbumes ordenados por año y botones de reproducir/aleatorio.
 - **Canciones**: lista de todas las canciones por orden alfabético.
 - **Favoritas**: toca ♡ en el reproductor o "Añadir a favoritas" en el menú ⋮ de cualquier canción.
 - **Al acabar un disco**: con la app abierta, pregunta si quieres otro disco al azar del mismo artista o elegir otro artista. Con la app cerrada o en segundo plano, sigue sola con otro disco del mismo artista.

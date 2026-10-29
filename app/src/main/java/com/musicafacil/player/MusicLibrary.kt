@@ -21,6 +21,8 @@ data class Song(
     val durationMs: Long,
     /** Ruta del archivo (para saber si es FLAC y avisar al escáner tras editarlo). */
     val path: String? = null,
+    /** Año de la etiqueta (0 si no tiene). */
+    val year: Int = 0,
 ) {
     val uri: Uri get() = songUri(id)
     val isFlac: Boolean get() = path?.endsWith(".flac", ignoreCase = true) == true
@@ -31,6 +33,8 @@ data class Album(
     val title: String,
     val artist: String,
     val songs: List<Song>,
+    /** Año del disco (el que más se repite entre sus canciones; 0 si no tiene). */
+    val year: Int = 0,
 )
 
 data class Artist(
@@ -93,6 +97,7 @@ object MusicLibrary {
             MediaStore.Audio.Media.ALBUM_ID,
             MediaStore.Audio.Media.TRACK,
             MediaStore.Audio.Media.DURATION,
+            MediaStore.Audio.Media.YEAR,
             // Ruta del archivo, para filtrar por carpeta (obsoleta pero se sigue rellenando)
             MediaStore.Audio.Media.DATA,
         ) + if (Build.VERSION.SDK_INT >= 30) arrayOf(MediaStore.Audio.Media.ALBUM_ARTIST) else emptyArray()
@@ -106,6 +111,7 @@ object MusicLibrary {
             val albumIdCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID)
             val trackCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.TRACK)
             val durCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
+            val yearCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.YEAR)
             val albumArtistCol = c.getColumnIndex(MediaStore.Audio.Media.ALBUM_ARTIST)
             val dataCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA)
             while (c.moveToNext()) {
@@ -124,6 +130,7 @@ object MusicLibrary {
                     track = c.getInt(trackCol),
                     durationMs = c.getLong(durCol),
                     path = c.getString(dataCol),
+                    year = c.getInt(yearCol).takeIf { it in 1000..9999 } ?: 0,
                 )
             }
         }
@@ -137,7 +144,9 @@ object MusicLibrary {
                 val sorted = list.sortedWith(compareBy({ it.track }, { it.title.lowercase() }))
                 // El artista más repetido del álbum (evita "Varios" por un featuring)
                 val artist = list.groupingBy { it.albumArtist }.eachCount().maxByOrNull { it.value }!!.key
-                Album(id, sorted.first().album, artist, sorted)
+                val year = list.map { it.year }.filter { it > 0 }
+                    .groupingBy { it }.eachCount().maxByOrNull { it.value }?.key ?: 0
+                Album(id, sorted.first().album, artist, sorted, year)
             }
             .sortedWith(compareBy({ it.artist.lowercase() }, { it.title.lowercase() }))
 
@@ -148,7 +157,12 @@ object MusicLibrary {
                 val name = list.flatMap { it.songs }.map { it.albumArtist }
                     .filter { artistKey(it) == artistKey(list.first().artist) }
                     .groupingBy { it }.eachCount().maxByOrNull { it.value }?.key ?: list.first().artist
-                Artist(name, list.map { if (it.artist == name) it else it.copy(artist = name) }.sortedBy { it.title.lowercase() })
+                // Discografía por año (los que no tienen año, al final por título)
+                Artist(
+                    name,
+                    list.map { if (it.artist == name) it else it.copy(artist = name) }
+                        .sortedWith(compareBy({ it.year == 0 }, { it.year }, { it.title.lowercase() })),
+                )
             }
             .sortedBy { it.name.lowercase().removePrefix("the ") }
 }

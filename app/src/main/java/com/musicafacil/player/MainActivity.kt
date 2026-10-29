@@ -482,6 +482,8 @@ private fun AlbumGrid(
     pad: PaddingValues,
     header: @Composable () -> Unit,
     onAlbum: (Album) -> Unit,
+    /** Texto bajo el título de cada disco (por defecto, el artista). */
+    subtitle: (Album) -> String = { it.artist },
 ) {
     LazyVerticalGrid(
         columns = when (view) {
@@ -502,8 +504,8 @@ private fun AlbumGrid(
     ) {
         item(span = { GridItemSpan(maxLineSpan) }) { header() }
         items(albums, key = { it.id }) { album ->
-            if (view == AlbumView.List) AlbumListRow(album) { onAlbum(album) }
-            else AlbumCard(album, view) { onAlbum(album) }
+            if (view == AlbumView.List) AlbumListRow(album, subtitle(album)) { onAlbum(album) }
+            else AlbumCard(album, view, subtitle(album)) { onAlbum(album) }
         }
     }
 }
@@ -617,7 +619,7 @@ private fun LetterScrubber(
 }
 
 @Composable
-private fun AlbumListRow(album: Album, onClick: () -> Unit) {
+private fun AlbumListRow(album: Album, subtitle: String, onClick: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable(onClick = onClick)
             .padding(vertical = 6.dp),
@@ -628,7 +630,7 @@ private fun AlbumListRow(album: Album, onClick: () -> Unit) {
         Column(Modifier.weight(1f)) {
             Text(album.title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
-                "${album.artist} · ${songCount(album.songs.size)}",
+                listOf(subtitle, songCount(album.songs.size)).filter { it.isNotBlank() }.joinToString(" · "),
                 fontSize = 13.sp, color = Gray, maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
         }
@@ -678,7 +680,7 @@ private fun TabLabel(text: String, selected: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun AlbumCard(album: Album, view: AlbumView, onClick: () -> Unit) {
+private fun AlbumCard(album: Album, view: AlbumView, subtitle: String, onClick: () -> Unit) {
     val small = view == AlbumView.Small
     Column(Modifier.clickable(onClick = onClick)) {
         AlbumArt(
@@ -692,7 +694,7 @@ private fun AlbumCard(album: Album, view: AlbumView, onClick: () -> Unit) {
             maxLines = 1, overflow = TextOverflow.Ellipsis,
         )
         if (!small) Text(
-            album.artist, fontSize = if (view == AlbumView.Medium) 12.sp else 13.sp,
+            subtitle, fontSize = if (view == AlbumView.Medium) 12.sp else 13.sp,
             color = Gray, maxLines = 1, overflow = TextOverflow.Ellipsis,
         )
     }
@@ -741,6 +743,7 @@ private fun ArtistScreen(
     AlbumGrid(
         albums = artist.albums,
         view = vm.albumView,
+        subtitle = { if (it.year > 0) it.year.toString() else "Sin año" },
         pad = PaddingValues(20.dp),
         header = {
             Column(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
@@ -799,7 +802,11 @@ private fun AlbumScreen(vm: MainViewModel, album: Album, onArtist: (String) -> U
                 modifier = Modifier.clickable { onArtist(album.artist) }.padding(vertical = 2.dp),
             )
             Text(
-                "${album.songs.size} canciones · ${formatTime(album.songs.sumOf { it.durationMs })}",
+                listOfNotNull(
+                    album.year.takeIf { it > 0 }?.toString(),
+                    songCount(album.songs.size),
+                    formatTime(album.songs.sumOf { it.durationMs }),
+                ).joinToString(" · "),
                 color = Gray, style = MaterialTheme.typography.bodySmall,
             )
             Spacer(Modifier.height(16.dp))
