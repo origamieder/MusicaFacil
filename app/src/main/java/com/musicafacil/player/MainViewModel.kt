@@ -120,18 +120,58 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 albumYears = years
                 rebuild()
             }
+            if (onlineYearsEnabled) fetchOnlineYears()
         }
     }
 
     private var albumYears: Map<Long, Int> = emptyMap()
+    /** Años encontrados en internet (MusicBrainz) para los discos sin año. */
+    private val onlineYears = java.util.concurrent.ConcurrentHashMap<Long, Int>()
+    private var onlineYearsJob: Job? = null
+
+    /** Busca en internet, poco a poco, el año de los discos que no lo tienen; reordena según llegan. */
+    private fun fetchOnlineYears() {
+        onlineYearsJob?.cancel()
+        onlineYearsJob = viewModelScope.launch {
+            val app = getApplication<Application>()
+            val missing = albums.filter { it.year == 0 && it.id !in onlineYears }
+            var pending = 0
+            var lastRebuild = System.currentTimeMillis()
+            for (a in missing) {
+                if (!onlineYearsEnabled) break
+                val y = OnlineMetadata.findYear(app, a.artist, a.title) ?: continue
+                onlineYears[a.id] = y
+                pending++
+                // No reordenar con cada disco: como mucho cada pocos segundos
+                if (System.currentTimeMillis() - lastRebuild > 3000) {
+                    rebuild()
+                    pending = 0
+                    lastRebuild = System.currentTimeMillis()
+                }
+            }
+            if (pending > 0) rebuild()
+        }
+    }
+
+    private val settings = app.getSharedPreferences("settings", android.content.Context.MODE_PRIVATE)
+    var onlineYearsEnabled by mutableStateOf(settings.getBoolean("online_years", true))
+        private set
+
+    fun changeOnlineYears(enabled: Boolean) {
+        onlineYearsEnabled = enabled
+        settings.edit().putBoolean("online_years", enabled).apply()
+        if (enabled) fetchOnlineYears() else onlineYearsJob?.cancel()
+    }
 
     /** Aplica las ediciones a las canciones leídas y vuelve a agrupar álbumes y artistas. */
     private suspend fun rebuild() {
+        val onlineYearsSnapshot = HashMap(onlineYears)
         val current = edits
         val raw = rawSongs
         val (s, a, ar) = withContext(Dispatchers.Default) {
             val s = raw.map { current.apply(it) }
-            val a = MusicLibrary.groupAlbums(s, albumYears)
+            // Prioridad: año puesto a mano > año del archivo > año de internet
+            val a = MusicLibrary.groupAlbums(s, onlineYearsSnapshot + albumYears)
             Triple(s, a, MusicLibrary.groupArtists(a))
         }
         OnlineCovers.register(a)
@@ -234,7 +274,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Canción cuyo diálogo de edición está abierto. */
     var editSongRequest by mutableStateOf<Song?>(null)
 
-    fun editSong(id: Long, title: String, artist: String, album: String, albumArtist: String) {
+    fun editSong(id: Long, title: String, artist: String, album: String, albumArtist: String, year: String) {
         val raw = rawSongs.firstOrNull { it.id == id } ?: return
         fun changed(new: String, old: String) = new.trim().takeIf { it.isNotEmpty() && it != old }
         val e = SongEdit(
@@ -242,21 +282,28 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             artist = changed(artist, raw.artist),
             album = changed(album, raw.album),
             albumArtist = changed(albumArtist, raw.albumArtist),
+            year = parseYearInput(year)?.takeIf { it != raw.year },
         )
         saveEdits(edits.copy(songs = if (e.isEmpty) edits.songs - id else edits.songs + (id to e)))
     }
 
     fun resetSong(id: Long) = saveEdits(edits.copy(songs = edits.songs - id))
 
-    fun editAlbum(album: Album, title: String, albumArtist: String) {
+    /** "1980" -> 1980; vacío o no válido -> null. */
+    fun parseYearInput(s: String): Int? = s.trim().toIntOrNull()?.takeIf { it in 1000..2999 }
+
+    /** @param year texto del campo Año; vacío = quitar el año puesto en la app */
+    fun editAlbum(album: Album, title: String, albumArtist: String, year: String) {
         val t = title.trim()
         val aa = albumArtist.trim()
+        val y = parseYearInput(year)
         val songs = edits.songs.toMutableMap()
         album.songs.forEach { s ->
             val e = songs[s.id] ?: SongEdit()
             songs[s.id] = e.copy(
                 album = t.ifEmpty { null } ?: e.album,
                 albumArtist = aa.ifEmpty { null } ?: e.albumArtist,
+                year = y,
             )
         }
         saveEdits(edits.copy(songs = songs))

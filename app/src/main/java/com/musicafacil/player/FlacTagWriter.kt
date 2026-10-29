@@ -27,6 +27,8 @@ object FlacTagWriter {
         val artist: String? = null,
         val album: String? = null,
         val albumArtist: String? = null,
+        /** Se escribe en DATE */
+        val year: String? = null,
     )
 
     private class Block(val type: Int, val data: ByteArray)
@@ -119,6 +121,7 @@ object FlacTagWriter {
             if (c.artist != null) add("ARTIST")
             if (c.album != null) add("ALBUM")
             if (c.albumArtist != null) { add("ALBUMARTIST"); add("ALBUM ARTIST") }
+            if (c.year != null) { add("DATE"); add("YEAR") }
         }
         if (old != null) {
             val b = ByteBuffer.wrap(old).order(ByteOrder.LITTLE_ENDIAN)
@@ -137,6 +140,7 @@ object FlacTagWriter {
         add("ARTIST", c.artist)
         add("ALBUM", c.album)
         add("ALBUMARTIST", c.albumArtist)
+        add("DATE", c.year)
 
         val size = 4 + vendor.size + 4 + kept.sumOf { 4 + it.size }
         val out = ByteBuffer.allocate(size).order(ByteOrder.LITTLE_ENDIAN)

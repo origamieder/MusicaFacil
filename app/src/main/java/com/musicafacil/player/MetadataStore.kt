@@ -10,8 +10,9 @@ data class SongEdit(
     val artist: String? = null,
     val album: String? = null,
     val albumArtist: String? = null,
+    val year: Int? = null,
 ) {
-    val isEmpty: Boolean get() = title == null && artist == null && album == null && albumArtist == null
+    val isEmpty: Boolean get() = title == null && artist == null && album == null && albumArtist == null && year == null
 }
 
 data class MetadataEdits(
@@ -26,6 +27,8 @@ data class MetadataEdits(
             artist = e.artist ?: song.artist,
             album = e.album ?: song.album,
             albumArtist = e.albumArtist ?: song.albumArtist,
+            year = e.year ?: song.year,
+            yearEdited = e.year != null,
         )
         return edited.copy(artist = alias(edited.artist), albumArtist = alias(edited.albumArtist))
     }
@@ -68,6 +71,7 @@ class MetadataStore(context: Context) {
                         artist = e.optStringOrNull("artist"),
                         album = e.optStringOrNull("album"),
                         albumArtist = e.optStringOrNull("albumArtist"),
+                        year = if (e.has("year")) e.getInt("year") else null,
                     )
                 }
             }
@@ -89,6 +93,7 @@ class MetadataStore(context: Context) {
                 e.artist?.let { put("artist", it) }
                 e.album?.let { put("album", it) }
                 e.albumArtist?.let { put("albumArtist", it) }
+                e.year?.let { put("year", it) }
             })
         }
         val root = JSONObject()

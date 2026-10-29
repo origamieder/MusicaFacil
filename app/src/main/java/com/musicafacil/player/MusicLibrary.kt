@@ -25,6 +25,8 @@ data class Song(
     val year: Int = 0,
     /** Fecha de modificación del archivo (segundos), para saber si hay que releer sus etiquetas. */
     val modified: Long = 0,
+    /** El año lo ha puesto el usuario en la app (manda sobre el del archivo). */
+    val yearEdited: Boolean = false,
 ) {
     val uri: Uri get() = songUri(id)
     val isFlac: Boolean get() = path?.endsWith(".flac", ignoreCase = true) == true
@@ -150,7 +152,7 @@ object MusicLibrary {
                 val sorted = list.sortedWith(compareBy({ it.track }, { it.title.lowercase() }))
                 // El artista más repetido del álbum (evita "Varios" por un featuring)
                 val artist = list.groupingBy { it.albumArtist }.eachCount().maxByOrNull { it.value }!!.key
-                val year = years[id] ?: list.map { it.year }.filter { it > 0 }
+                val year = list.firstOrNull { it.yearEdited }?.year ?: years[id] ?: list.map { it.year }.filter { it > 0 }
                     .groupingBy { it }.eachCount().maxByOrNull { it.value }?.key ?: 0
                 Album(id, sorted.first().album, artist, sorted, year)
             }

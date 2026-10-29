@@ -26,6 +26,9 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
@@ -484,6 +487,7 @@ private fun AlbumGrid(
     onAlbum: (Album) -> Unit,
     /** Texto bajo el título de cada disco (por defecto, el artista). */
     subtitle: (Album) -> String = { it.artist },
+    onLongAlbum: ((Album) -> Unit)? = null,
 ) {
     LazyVerticalGrid(
         columns = when (view) {
@@ -504,8 +508,9 @@ private fun AlbumGrid(
     ) {
         item(span = { GridItemSpan(maxLineSpan) }) { header() }
         items(albums, key = { it.id }) { album ->
-            if (view == AlbumView.List) AlbumListRow(album, subtitle(album)) { onAlbum(album) }
-            else AlbumCard(album, view, subtitle(album)) { onAlbum(album) }
+            val long = onLongAlbum?.let { { it(album) } }
+            if (view == AlbumView.List) AlbumListRow(album, subtitle(album), long) { onAlbum(album) }
+            else AlbumCard(album, view, subtitle(album), long) { onAlbum(album) }
         }
     }
 }
@@ -619,9 +624,9 @@ private fun LetterScrubber(
 }
 
 @Composable
-private fun AlbumListRow(album: Album, subtitle: String, onClick: () -> Unit) {
+private fun AlbumListRow(album: Album, subtitle: String, onLongClick: (() -> Unit)?, onClick: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable(onClick = onClick)
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).combinedClickable(onLongClick = onLongClick, onClick = onClick)
             .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -680,9 +685,9 @@ private fun TabLabel(text: String, selected: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun AlbumCard(album: Album, view: AlbumView, subtitle: String, onClick: () -> Unit) {
+private fun AlbumCard(album: Album, view: AlbumView, subtitle: String, onLongClick: (() -> Unit)?, onClick: () -> Unit) {
     val small = view == AlbumView.Small
-    Column(Modifier.clickable(onClick = onClick)) {
+    Column(Modifier.combinedClickable(onLongClick = onLongClick, onClick = onClick)) {
         AlbumArt(
             album.id, Modifier.fillMaxWidth().aspectRatio(1f),
             sizePx = if (view == AlbumView.Large) 400 else 250,
@@ -734,6 +739,8 @@ private fun ArtistScreen(
     onBack: () -> Unit,
 ) {
     var renaming by remember { mutableStateOf(false) }
+    var editingAlbum by remember { mutableStateOf<Album?>(null) }
+    editingAlbum?.let { a -> AlbumEditDialog(vm, a) { editingAlbum = null } }
     if (renaming) {
         ArtistRenameDialog(vm, artist, onDismiss = { renaming = false }) {
             onRenamed(it)
@@ -744,6 +751,8 @@ private fun ArtistScreen(
         albums = artist.albums,
         view = vm.albumView,
         subtitle = { if (it.year > 0) it.year.toString() else "Sin año" },
+        // Pulsación larga: editar el disco (p. ej. ponerle el año) sin entrar en él
+        onLongAlbum = { editingAlbum = it },
         pad = PaddingValues(20.dp),
         header = {
             Column(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
@@ -1071,6 +1080,20 @@ private fun EditField(label: String, value: String, onChange: (String) -> Unit) 
     )
 }
 
+@Composable
+private fun YearField(value: String, onChange: (String) -> Unit) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = { v -> onChange(v.filter { it.isDigit() }.take(4)) },
+        singleLine = true,
+        label = { Text("Año") },
+        placeholder = { Text("Ej. 1980", color = DarkGray) },
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        colors = fieldColors(),
+        modifier = Modifier.fillMaxWidth(),
+    )
+}
+
 private const val EDIT_NOTE = "Los cambios se guardan en EDplayer; tus archivos no se modifican."
 
 @Composable
@@ -1079,6 +1102,7 @@ private fun SongEditDialog(vm: MainViewModel, song: Song, onDone: () -> Unit) {
     var artist by remember { mutableStateOf(song.artist) }
     var album by remember { mutableStateOf(song.album) }
     var albumArtist by remember { mutableStateOf(song.albumArtist) }
+    var year by remember { mutableStateOf(song.year.takeIf { it > 0 }?.toString() ?: "") }
     val fileOption = song.isFlac && vm.canWriteFiles
     var toFile by remember { mutableStateOf(fileOption) }
     AlertDialog(
@@ -1094,6 +1118,7 @@ private fun SongEditDialog(vm: MainViewModel, song: Song, onDone: () -> Unit) {
                 EditField("Artista", artist) { artist = it }
                 EditField("Álbum", album) { album = it }
                 EditField("Artista del álbum", albumArtist) { albumArtist = it }
+                YearField(year) { year = it }
                 if (fileOption) FileCheckbox(toFile, "Guardar también en el archivo FLAC") { toFile = it }
                 else Text(EDIT_NOTE, color = Gray, fontSize = 12.sp)
                 Text(
@@ -1105,8 +1130,9 @@ private fun SongEditDialog(vm: MainViewModel, song: Song, onDone: () -> Unit) {
         },
         confirmButton = {
             TextButton(onClick = {
-                vm.editSong(song.id, title, artist, album, albumArtist)
-                if (toFile) vm.requestFileWrite(mapOf(song.id to FlacTagWriter.Changes(title, artist, album, albumArtist)))
+                vm.editSong(song.id, title, artist, album, albumArtist, year)
+                val y = vm.parseYearInput(year)?.toString()
+                if (toFile) vm.requestFileWrite(mapOf(song.id to FlacTagWriter.Changes(title, artist, album, albumArtist, y)))
                 onDone()
             }) { Text("Guardar") }
         },
@@ -1168,6 +1194,11 @@ private fun ArtistRenameDialog(vm: MainViewModel, artist: Artist, onDismiss: () 
 private fun AlbumEditDialog(vm: MainViewModel, album: Album, onDone: () -> Unit) {
     var title by remember { mutableStateOf(album.title) }
     var artist by remember { mutableStateOf(album.artist) }
+    var year by remember { mutableStateOf(album.year.takeIf { it > 0 }?.toString() ?: "") }
+    var searching by remember { mutableStateOf(false) }
+    var searchResult by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     val flacCount = album.songs.count { it.isFlac }
     val fileOption = flacCount > 0 && vm.canWriteFiles
     var toFile by remember { mutableStateOf(fileOption) }
@@ -1179,6 +1210,26 @@ private fun AlbumEditDialog(vm: MainViewModel, album: Album, onDone: () -> Unit)
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 EditField("Título del álbum", title) { title = it }
                 EditField("Artista del álbum", artist) { artist = it }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.weight(1f)) { YearField(year) { year = it } }
+                    Spacer(Modifier.width(8.dp))
+                    TextButton(
+                        onClick = {
+                            searching = true
+                            scope.launch {
+                                val found = OnlineMetadata.findYear(context, artist, title, force = true)
+                                searching = false
+                                if (found != null) year = found.toString()
+                                searchResult = if (found != null) "Encontrado en internet: $found" else "No se ha encontrado en internet"
+                            }
+                        },
+                        enabled = !searching,
+                    ) {
+                        if (searching) CircularProgressIndicator(Modifier.size(18.dp), color = White, strokeWidth = 2.dp)
+                        else Text("Buscar en\ninternet", fontSize = 12.sp, textAlign = TextAlign.Center, lineHeight = 14.sp)
+                    }
+                }
+                searchResult?.let { Text(it, color = Gray, fontSize = 12.sp) }
                 Text("Se aplica a las ${album.songs.size} canciones.", color = Gray, fontSize = 12.sp)
                 if (fileOption) FileCheckbox(toFile, "Guardar también en los archivos FLAC ($flacCount)") { toFile = it }
                 else Text(EDIT_NOTE, color = Gray, fontSize = 12.sp)
@@ -1186,8 +1237,11 @@ private fun AlbumEditDialog(vm: MainViewModel, album: Album, onDone: () -> Unit)
         },
         confirmButton = {
             TextButton(onClick = {
-                vm.editAlbum(album, title, artist)
-                if (toFile) vm.requestFileWrite(album.songs.associate { it.id to FlacTagWriter.Changes(album = title, albumArtist = artist) })
+                vm.editAlbum(album, title, artist, year)
+                val y = vm.parseYearInput(year)?.toString()
+                if (toFile) vm.requestFileWrite(
+                    album.songs.associate { it.id to FlacTagWriter.Changes(album = title, albumArtist = artist, year = y) }
+                )
                 onDone()
             }) { Text("Guardar") }
         },
@@ -1688,7 +1742,37 @@ private fun FoldersScreen(vm: MainViewModel, onBack: () -> Unit) {
                 Spacer(Modifier.height(12.dp))
                 Pill("Reintentar las que faltan", Icons.Filled.Refresh) { vm.retryCovers() }
             }
+            Spacer(Modifier.height(32.dp))
+            SectionLabel("AÑOS DE LOS DISCOS")
+            Spacer(Modifier.height(8.dp))
+            SettingSwitch(
+                "Buscar años en internet",
+                "Para los discos sin año: se busca en MusicBrainz la fecha del primer lanzamiento (el año del disco original, no el de la reedición).",
+                vm.onlineYearsEnabled, vm::changeOnlineYears,
+            )
         }
+    }
+}
+
+@Composable
+private fun SettingSwitch(title: String, description: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable { onChange(!checked) }.padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            Text(description, color = Gray, fontSize = 13.sp)
+        }
+        Spacer(Modifier.width(12.dp))
+        Switch(
+            checked = checked,
+            onCheckedChange = onChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Black, checkedTrackColor = White,
+                uncheckedThumbColor = Gray, uncheckedTrackColor = Card, uncheckedBorderColor = DarkGray,
+            ),
+        )
     }
 }
 
