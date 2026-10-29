@@ -134,7 +134,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         onlineYearsJob?.cancel()
         onlineYearsJob = viewModelScope.launch {
             val app = getApplication<Application>()
-            val missing = albums.filter { it.year == 0 && it.id !in onlineYears }
+            val missing = albums.filter { it.year == 0 && !onlineYears.containsKey(it.id) }
             var pending = 0
             var lastRebuild = System.currentTimeMillis()
             for (a in missing) {

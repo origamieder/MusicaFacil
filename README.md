@@ -11,6 +11,7 @@ Reproductor de música para Android, minimalista en blanco y negro. Pensado para
 - **Al acabar un disco**: con la app abierta, pregunta si quieres otro disco al azar del mismo artista o elegir otro artista. Con la app cerrada o en segundo plano, sigue sola con otro disco del mismo artista.
 - **Gestos en el reproductor**: desliza ← siguiente, → anterior, ↓ abre el álbum (la portada vuela al mini reproductor), ↑ vuelve a la pantalla principal.
 - **Portadas de internet**: si un disco no tiene portada, se busca en iTunes y Deezer y se guarda en el móvil (se puede desactivar en Ajustes; en el menú ⋮ de un álbum puedes forzar la búsqueda).
+- **Años de los discos**: se leen de las etiquetas (año original si existe); los discos sin año se buscan en MusicBrainz. También se pueden poner a mano (Editar álbum, o pulsación larga en un disco dentro de un artista).
 - **Portada con brillo**: en el reproductor, la portada irradia sus propios colores.
 - **Editar etiquetas**: menú ⋮ de una canción → "Editar información"; ⋮ en un álbum o artista para editarlo, renombrarlo o unirlo con otro. Los artistas se agrupan ignorando mayúsculas y signos ("AC/DC" = "AC-DC"). Los cambios se guardan en la app y, si son FLAC, también se pueden escribir en el propio archivo (Android pide permiso).
 - **Cola**: en el reproductor, el icono de arriba a la derecha muestra lo que va a sonar. Puedes saltar a una canción, quitarla o reordenarla arrastrando (con aleatorio desactivado).
