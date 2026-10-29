@@ -92,7 +92,32 @@ object TextFix {
 /** Lector mínimo de etiquetas ID3v2 (MP3) y Vorbis comment (FLAC). */
 object TagReader {
 
-    data class Tags(val title: String?, val artist: String?, val album: String?, val albumArtist: String?)
+    data class Tags(
+        val title: String?,
+        val artist: String?,
+        val album: String?,
+        val albumArtist: String?,
+        /** Año de la fecha normal (DATE / YEAR) */
+        val year: Int?,
+        /** Año original, para reediciones (ORIGINALDATE / ORIGINALYEAR) */
+        val originalYear: Int?,
+    )
+
+    /** Convierte las etiquetas leídas (con nombres comunes) en [Tags]. */
+    private fun toTags(m: Map<String, String>) = Tags(
+        title = m["TITLE"],
+        artist = m["ARTIST"],
+        album = m["ALBUM"],
+        albumArtist = m["ALBUMARTIST"] ?: m["ALBUM ARTIST"],
+        year = parseYear(m["DATE"]) ?: parseYear(m["YEAR"]),
+        originalYear = parseYear(m["ORIGINALDATE"]) ?: parseYear(m["ORIGINALYEAR"]),
+    )
+
+    private val yearRegex = Regex("[0-9]{4}")
+
+    /** Primer año de 4 cifras ("1980-07-25" -> 1980). */
+    fun parseYear(s: String?): Int? =
+        s?.let { yearRegex.find(it)?.value?.toInt() }?.takeIf { it in 1000..2999 }
 
     fun read(context: Context, uri: Uri): Tags? = runCatching {
         context.contentResolver.openInputStream(uri)?.use { raw ->
@@ -124,11 +149,17 @@ object TagReader {
         }
         val idLen = if (version == 2) 3 else 4
         val headerLen = if (version == 2) 6 else 10
-        val wanted = if (version == 2) mapOf("TT2" to 0, "TP1" to 1, "TAL" to 2, "TP2" to 3)
-        else mapOf("TIT2" to 0, "TPE1" to 1, "TALB" to 2, "TPE2" to 3)
-        val values = arrayOfNulls<String>(4)
+        // Marco ID3 -> nombre común
+        val wanted = if (version == 2) mapOf(
+            "TT2" to "TITLE", "TP1" to "ARTIST", "TAL" to "ALBUM", "TP2" to "ALBUMARTIST",
+            "TYE" to "YEAR", "TOR" to "ORIGINALYEAR",
+        ) else mapOf(
+            "TIT2" to "TITLE", "TPE1" to "ARTIST", "TALB" to "ALBUM", "TPE2" to "ALBUMARTIST",
+            "TYER" to "YEAR", "TDRC" to "DATE", "TDOR" to "ORIGINALDATE", "TORY" to "ORIGINALYEAR",
+        )
+        val values = HashMap<String, String>()
 
-        while (read + headerLen <= tagSize && values.any { it == null }) {
+        while (read + headerLen <= tagSize && values.size < wanted.size) {
             val fh = input.readN(headerLen)
             read += headerLen
             if (fh[0].toInt() == 0) break // relleno
@@ -139,17 +170,17 @@ object TagReader {
                 else -> syncsafe(fh, 4)
             }
             if (size <= 0 || read + size > tagSize) break
-            val slot = wanted[id]
+            val name = wanted[id]
             val formatFlags = if (version == 4) fh[9].toInt() else 0
             // Solo marcos de texto normales (sin comprimir, cifrar ni desincronizar)
-            if (slot != null && size < 64 * 1024 && formatFlags and 0x0F == 0) {
-                values[slot] = decodeText(input.readN(size))?.takeIf { it.isNotBlank() }
+            if (name != null && size < 64 * 1024 && formatFlags and 0x0F == 0) {
+                decodeText(input.readN(size))?.takeIf { it.isNotBlank() }?.let { values[name] = it }
             } else {
                 input.skipN(size.toLong())
             }
             read += size
         }
-        return Tags(values[0], values[1], values[2], values[3])
+        return toTags(values)
     }
 
     private fun decodeText(data: ByteArray): String? {
@@ -198,7 +229,7 @@ object TagReader {
             val eq = entry.indexOf('=')
             if (eq > 0) map.putIfAbsent(entry.substring(0, eq).uppercase(), entry.substring(eq + 1))
         }
-        return Tags(map["TITLE"], map["ARTIST"], map["ALBUM"], map["ALBUMARTIST"] ?: map["ALBUM ARTIST"])
+        return toTags(map)
     }
 
     // --- utilidades ---

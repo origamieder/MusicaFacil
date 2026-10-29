@@ -114,8 +114,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             rebuild()
             loading = false
             loaded = true
+            // En segundo plano: años leídos de los archivos (originales si los hay) para ordenar discografías
+            val years = withContext(Dispatchers.IO) { AlbumYears.resolve(getApplication(), albums) }
+            if (years != albumYears) {
+                albumYears = years
+                rebuild()
+            }
         }
     }
+
+    private var albumYears: Map<Long, Int> = emptyMap()
 
     /** Aplica las ediciones a las canciones leídas y vuelve a agrupar álbumes y artistas. */
     private suspend fun rebuild() {
@@ -123,7 +131,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val raw = rawSongs
         val (s, a, ar) = withContext(Dispatchers.Default) {
             val s = raw.map { current.apply(it) }
-            val a = MusicLibrary.groupAlbums(s)
+            val a = MusicLibrary.groupAlbums(s, albumYears)
             Triple(s, a, MusicLibrary.groupArtists(a))
         }
         OnlineCovers.register(a)

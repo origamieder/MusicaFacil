@@ -23,6 +23,8 @@ data class Song(
     val path: String? = null,
     /** Año de la etiqueta (0 si no tiene). */
     val year: Int = 0,
+    /** Fecha de modificación del archivo (segundos), para saber si hay que releer sus etiquetas. */
+    val modified: Long = 0,
 ) {
     val uri: Uri get() = songUri(id)
     val isFlac: Boolean get() = path?.endsWith(".flac", ignoreCase = true) == true
@@ -98,6 +100,7 @@ object MusicLibrary {
             MediaStore.Audio.Media.TRACK,
             MediaStore.Audio.Media.DURATION,
             MediaStore.Audio.Media.YEAR,
+            MediaStore.Audio.Media.DATE_MODIFIED,
             // Ruta del archivo, para filtrar por carpeta (obsoleta pero se sigue rellenando)
             MediaStore.Audio.Media.DATA,
         ) + if (Build.VERSION.SDK_INT >= 30) arrayOf(MediaStore.Audio.Media.ALBUM_ARTIST) else emptyArray()
@@ -112,6 +115,7 @@ object MusicLibrary {
             val trackCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.TRACK)
             val durCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
             val yearCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.YEAR)
+            val modCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_MODIFIED)
             val albumArtistCol = c.getColumnIndex(MediaStore.Audio.Media.ALBUM_ARTIST)
             val dataCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA)
             while (c.moveToNext()) {
@@ -131,6 +135,7 @@ object MusicLibrary {
                     durationMs = c.getLong(durCol),
                     path = c.getString(dataCol),
                     year = c.getInt(yearCol).takeIf { it in 1000..9999 } ?: 0,
+                    modified = c.getLong(modCol),
                 )
             }
         }
@@ -138,13 +143,14 @@ object MusicLibrary {
         return songs.map { TextFix.fix(context, it) }
     }
 
-    fun groupAlbums(songs: List<Song>): List<Album> =
+    /** @param years años leídos de los archivos ([AlbumYears]); mandan sobre los de Android */
+    fun groupAlbums(songs: List<Song>, years: Map<Long, Int> = emptyMap()): List<Album> =
         songs.groupBy { it.albumId }
             .map { (id, list) ->
                 val sorted = list.sortedWith(compareBy({ it.track }, { it.title.lowercase() }))
                 // El artista más repetido del álbum (evita "Varios" por un featuring)
                 val artist = list.groupingBy { it.albumArtist }.eachCount().maxByOrNull { it.value }!!.key
-                val year = list.map { it.year }.filter { it > 0 }
+                val year = years[id] ?: list.map { it.year }.filter { it > 0 }
                     .groupingBy { it }.eachCount().maxByOrNull { it.value }?.key ?: 0
                 Album(id, sorted.first().album, artist, sorted, year)
             }

@@ -107,7 +107,8 @@ class PlaybackService : MediaSessionService() {
                     val edits = MetadataStore(this@PlaybackService).load()
                     val songs = MusicLibrary.loadSongs(this@PlaybackService, FolderSettings(this@PlaybackService).load())
                         .map { edits.apply(it) }
-                    val albums = MusicLibrary.groupAlbums(songs)
+                    val years = AlbumYears.resolve(this@PlaybackService, MusicLibrary.groupAlbums(songs))
+                    val albums = MusicLibrary.groupAlbums(songs, years)
                     albums to MusicLibrary.groupArtists(albums)
                 }.getOrNull()
             } ?: return@launch
