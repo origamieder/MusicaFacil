@@ -45,6 +45,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -418,15 +421,102 @@ private fun HomeScreen(
     val artists = remember(vm.artists, q) {
         if (q.isEmpty()) vm.artists else vm.artists.filter { q in it.name.lowercase() }
     }
-    val songs = remember(vm.songs, q, tab) {
-        if (tab != Tab.Songs) emptyList()
-        else vm.songs
+    val songs = remember(vm.songs, q) {
+        vm.songs
             .filter { q.isEmpty() || q in it.title.lowercase() || q in it.artist.lowercase() || q in it.album.lowercase() }
             .sortedBy { it.title.lowercase() }
     }
 
-    val header: @Composable () -> Unit = {
-        Column(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+
+    val pad = PaddingValues(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 20.dp)
+    val currentId = vm.currentItem?.mediaId
+    val emptyLibrary: @Composable () -> Unit = {
+        if (vm.loaded && vm.songs.isEmpty()) {
+            Text(
+                "No hay música. Copia tus FLAC o MP3 al móvil (por ejemplo a la carpeta Music) y toca aquí para volver a buscar.",
+                color = Gray, modifier = Modifier.padding(bottom = 16.dp).clickable { vm.loadLibrary() },
+            )
+        }
+    }
+    @Composable
+    fun TabContent(t: Tab) {
+        when (t) {
+            Tab.Albums -> Box(Modifier.fillMaxSize()) {
+                val albumHeader: @Composable () -> Unit = {
+                    Column {
+                        emptyLibrary()
+                        SectionHeader("${albums.size} álbumes", "orden aleatorio")
+                        if (letter != null) {
+                            Row(Modifier.padding(bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    if (albums.isEmpty()) "Ningún disco empieza por «$letter»" else "Discos que empiezan por «$letter»",
+                                    color = Gray, fontSize = 13.sp, modifier = Modifier.weight(1f),
+                                )
+                                Pill("Todos", Icons.Filled.Close) { letter = null }
+                            }
+                        }
+                    }
+                }
+                // Algo más de margen a la derecha para la barra de letras
+                AlbumGrid(albums, vm.albumView, PaddingValues(start = 20.dp, end = 30.dp, top = 16.dp, bottom = 20.dp), albumHeader, onAlbum)
+                LetterScrubber(
+                    available = availableLetters,
+                    selected = letter,
+                    onSelect = { letter = it },
+                    modifier = Modifier.align(Alignment.TopEnd).padding(top = 52.dp, bottom = 12.dp).fillMaxHeight(),
+                )
+            }
+            Tab.Artists -> LazyColumn(Modifier.fillMaxSize(), contentPadding = pad) {
+                item { emptyLibrary(); SectionHeader("${artists.size} artistas", null) }
+                itemsIndexed(artists, key = { _, a -> a.name }) { i, artist ->
+                    ArtistRow(artist, Modifier.animateItem(placementSpec = bouncy()).grouped(i, artists.size)) { onArtist(artist.name) }
+                }
+            }
+            Tab.Songs -> LazyColumn(Modifier.fillMaxSize(), contentPadding = pad) {
+                item { emptyLibrary(); SectionHeader("${songs.size} canciones", null) }
+                itemsIndexed(songs, key = { _, s -> s.id }) { i, song ->
+                    SongRow(
+                        leading = { AlbumArt(song.albumId, Modifier.size(44.dp), sizePx = 150, shape = RoundedCornerShape(6.dp)) },
+                        title = song.title,
+                        subtitle = "${song.artist} · ${song.album}",
+                        playing = song.id.toString() == currentId,
+                        onClick = { vm.playSongs(songs, i) },
+                        modifier = Modifier.grouped(i, songs.size),
+                    ) {
+                        Duration(song)
+                        SongMenu(vm, song)
+                    }
+                }
+            }
+            Tab.Playlists -> LazyColumn(Modifier.fillMaxSize(), contentPadding = pad) {
+                item { SectionHeader("${vm.playlists.size} playlists", null) }
+                itemsIndexed(vm.playlists, key = { _, p -> p.id }) { i, p ->
+                    PlaylistRow(vm, p, Modifier.animateItem(placementSpec = bouncy()).grouped(i, vm.playlists.size)) { onPlaylist(p.id) }
+                }
+                item {
+                    Spacer(Modifier.height(12.dp))
+                    Row(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Surface1)
+                            .border(1.dp, Line, RoundedCornerShape(18.dp))
+                            .bouncyClick(0.97f) { creating = true }
+                            .padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)).background(White),
+                            contentAlignment = Alignment.Center,
+                        ) { Icon(Icons.Filled.Add, null, tint = Black) }
+                        Spacer(Modifier.width(14.dp))
+                        Text("Nueva playlist", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+        }
+    }
+
+    // ----- Cabecera fija (título, buscador y pestañas); debajo, el contenido de cada pestaña
+    Column(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 20.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("Biblioteca", style = MaterialTheme.typography.headlineLarge)
@@ -455,92 +545,55 @@ private fun HomeScreen(
                 )
                 if (tab == Tab.Albums) AlbumViewMenu(vm)
             }
-            Spacer(Modifier.height(18.dp))
-            SectionHeader(
-                when (tab) {
-                    Tab.Albums -> "${albums.size} álbumes"
-                    Tab.Artists -> "${artists.size} artistas"
-                    Tab.Songs -> "${songs.size} canciones"
-                    Tab.Playlists -> "${vm.playlists.size} playlists"
-                },
-                if (tab == Tab.Albums) "orden aleatorio" else null,
-            )
-            if (tab == Tab.Albums && letter != null) {
-                Spacer(Modifier.height(10.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        if (albums.isEmpty()) "Ningún disco empieza por «$letter»" else "Discos que empiezan por «$letter»",
-                        color = Gray, fontSize = 13.sp, modifier = Modifier.weight(1f),
-                    )
-                    Pill("Todos", Icons.Filled.Close) { letter = null }
-                }
-            }
-            if (vm.loaded && vm.songs.isEmpty()) {
-                Spacer(Modifier.height(24.dp))
-                Text(
-                    "No hay música. Copia tus FLAC o MP3 al móvil (por ejemplo a la carpeta Music) y toca aquí para volver a buscar.",
-                    color = Gray, modifier = Modifier.clickable { vm.loadLibrary() },
-                )
-            }
         }
-    }
 
-    val pad = PaddingValues(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 20.dp)
-    val currentId = vm.currentItem?.mediaId
-    when (tab) {
-        Tab.Albums -> Box(Modifier.fillMaxSize()) {
-            // Algo más de margen a la derecha para la barra de letras
-            AlbumGrid(albums, vm.albumView, PaddingValues(start = 20.dp, end = 30.dp, top = 20.dp, bottom = 20.dp), header, onAlbum)
-            // Índice de letras en el borde derecho (debajo de la cabecera)
-            LetterScrubber(
-                available = availableLetters,
-                selected = letter,
-                onSelect = { letter = it },
-                modifier = Modifier.align(Alignment.TopEnd).padding(top = 236.dp, bottom = 12.dp).fillMaxHeight(),
-            )
-        }
-        Tab.Artists -> LazyColumn(contentPadding = pad) {
-            item { header() }
-            itemsIndexed(artists, key = { _, a -> a.name }) { i, artist ->
-                ArtistRow(artist, Modifier.animateItem(placementSpec = bouncy()).grouped(i, artists.size)) { onArtist(artist.name) }
-            }
-        }
-        Tab.Songs -> LazyColumn(contentPadding = pad) {
-            item { header() }
-            itemsIndexed(songs, key = { _, s -> s.id }) { i, song ->
-                SongRow(
-                    leading = { AlbumArt(song.albumId, Modifier.size(44.dp), sizePx = 150, shape = RoundedCornerShape(6.dp)) },
-                    title = song.title,
-                    subtitle = "${song.artist} · ${song.album}",
-                    playing = song.id.toString() == currentId,
-                    onClick = { vm.playSongs(songs, i) },
-                    modifier = Modifier.grouped(i, songs.size),
-                ) {
-                    Duration(song)
-                    SongMenu(vm, song)
+        // ----- Deslizar a los lados cambia de pestaña. El contenido sigue al dedo y,
+        // al soltar, cambia con un rebote (o vuelve a su sitio si no se ha deslizado bastante).
+        val scope = rememberCoroutineScope()
+        val drag = remember { Animatable(0f) }
+        val threshold = with(LocalDensity.current) { 80.dp.toPx() }
+        val currentTab by rememberUpdatedState(tab)
+        val tabHolder = rememberSaveableStateHolder()
+        Box(
+            Modifier.weight(1f).fillMaxWidth()
+                .pointerInput(Unit) {
+                    var total = 0f
+                    detectHorizontalDragGestures(
+                        onDragStart = { total = 0f },
+                        onDragEnd = {
+                            val i = currentTab.ordinal
+                            val target = when {
+                                total < -threshold && i < Tab.entries.lastIndex -> i + 1
+                                total > threshold && i > 0 -> i - 1
+                                else -> i
+                            }
+                            if (target != i) tab = Tab.entries[target]
+                            scope.launch { drag.animateTo(0f, bouncy()) }
+                        },
+                        onDragCancel = { scope.launch { drag.animateTo(0f, bouncy()) } },
+                    ) { change, amount ->
+                        total += amount
+                        val i = currentTab.ordinal
+                        // En los extremos (primera y última pestaña) cuesta más: efecto goma
+                        val atEdge = (total > 0 && i == 0) || (total < 0 && i == Tab.entries.lastIndex)
+                        change.consume()
+                        scope.launch { drag.snapTo(total * if (atEdge) 0.15f else 0.35f) }
+                    }
                 }
-            }
-        }
-        Tab.Playlists -> LazyColumn(contentPadding = pad) {
-            item { header() }
-            itemsIndexed(vm.playlists, key = { _, p -> p.id }) { i, p ->
-                PlaylistRow(vm, p, Modifier.animateItem(placementSpec = bouncy()).grouped(i, vm.playlists.size)) { onPlaylist(p.id) }
-            }
-            item {
-                Spacer(Modifier.height(12.dp))
-                Row(
-                    Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Surface1)
-                        .border(1.dp, Line, RoundedCornerShape(18.dp))
-                        .bouncyClick(0.97f) { creating = true }
-                        .padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Box(
-                        Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)).background(White),
-                        contentAlignment = Alignment.Center,
-                    ) { Icon(Icons.Filled.Add, null, tint = Black) }
-                    Spacer(Modifier.width(14.dp))
-                    Text("Nueva playlist", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                .graphicsLayer { translationX = drag.value },
+        ) {
+            AnimatedContent(
+                targetState = tab,
+                transitionSpec = {
+                    val dir = if (targetState.ordinal > initialState.ordinal) 1 else -1
+                    (slideInHorizontally(bouncy(Spring.StiffnessMediumLow)) { w -> dir * w / 3 } + fadeIn(tween(160))) togetherWith
+                        (slideOutHorizontally(tween(160)) { w -> -dir * w / 4 } + fadeOut(tween(120)))
+                },
+                label = "pestañas",
+            ) { t ->
+                // Cada pestaña recuerda su propia posición de scroll
+                tabHolder.SaveableStateProvider(t.name) {
+                    TabContent(t)
                 }
             }
         }
