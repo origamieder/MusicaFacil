@@ -12,6 +12,8 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
+import java.io.IOException
+import kotlinx.coroutines.delay
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
@@ -30,7 +32,10 @@ object OnlineCovers {
 
     private val albums = ConcurrentHashMap<Long, Info>()
     private val locks = ConcurrentHashMap<Long, Mutex>()
-    private val network = Semaphore(2)
+    // Una búsqueda cada vez y con un poco de pausa: iTunes rechaza las ráfagas de peticiones
+    private val network = Semaphore(1)
+    private var lastRequest = 0L
+    private const val MIN_GAP_MS = 700L
 
     /** Se llama cada vez que cambia la biblioteca, para saber qué buscar de cada álbum. */
     fun register(list: List<Album>) {
@@ -45,8 +50,16 @@ object OnlineCovers {
 
     private fun prefs(context: Context) = context.getSharedPreferences("covers", Context.MODE_PRIVATE)
 
-    private fun notFound(context: Context): Set<String> =
-        prefs(context).getStringSet("not_found", emptySet())!!
+    private fun notFound(context: Context): Set<String> {
+        val p = prefs(context)
+        // Las versiones anteriores marcaban como "sin portada" los discos cuya búsqueda había fallado
+        // por red o por exceso de peticiones: se olvida esa lista una vez para volver a buscarlos
+        if (!p.getBoolean("not_found_reset_v2", false)) {
+            p.edit().putStringSet("not_found", emptySet()).putBoolean("not_found_reset_v2", true).apply()
+            return emptySet()
+        }
+        return p.getStringSet("not_found", emptySet())!!
+    }
 
     private fun markNotFound(context: Context, albumId: Long) {
         prefs(context).edit().putStringSet("not_found", notFound(context) + albumId.toString()).apply()
@@ -68,13 +81,26 @@ object OnlineCovers {
         locks.getOrPut(albumId) { Mutex() }.withLock {
             cachedFile(context, albumId)?.let { return@withLock decode(it, px) }
             if (albumId.toString() in notFound(context)) return@withLock null
-            val bytes = network.withPermit {
-                runCatching {
-                    val url = findOnItunes(info) ?: findOnDeezer(info)
-                    url?.let { download(it) }
-                }.getOrNull()
+            val bytes = try {
+                network.withPermit {
+                    val wait = lastRequest + MIN_GAP_MS - System.currentTimeMillis()
+                    if (wait > 0) delay(wait)
+                    try {
+                        // Deezer primero: admite más peticiones por minuto que iTunes
+                        val url = findOnDeezer(info) ?: findOnItunes(info)
+                        url?.let { download(it) }
+                    } finally {
+                        lastRequest = System.currentTimeMillis()
+                    }
+                }
+            } catch (e: IOException) {
+                // Sin conexión o servicio saturado: no se marca, se reintentará más adelante
+                return@withLock null
+            } catch (e: org.json.JSONException) {
+                return@withLock null
             }
             if (bytes == null) {
+                // Los dos servicios han respondido y no tienen este disco
                 markNotFound(context, albumId)
                 null
             } else {
@@ -126,6 +152,8 @@ object OnlineCovers {
     private fun findOnDeezer(info: Info): String? {
         val q = URLEncoder.encode("artist:\"${info.artist}\" album:\"${info.title}\"", "UTF-8")
         val json = JSONObject(get("https://api.deezer.com/search/album?q=$q&limit=10") ?: return null)
+        // Deezer avisa del límite de peticiones dentro de una respuesta normal
+        json.optJSONObject("error")?.let { throw IOException(it.optString("message")) }
         val data = json.optJSONArray("data") ?: return null
         for (i in 0 until data.length()) {
             val r = data.getJSONObject(i)
@@ -147,7 +175,11 @@ object OnlineCovers {
     private fun get(url: String): String? {
         val c = open(url)
         return try {
-            if (c.responseCode == 200) c.inputStream.bufferedReader().use { it.readText() } else null
+            when (c.responseCode) {
+                200 -> c.inputStream.bufferedReader().use { it.readText() }
+                404 -> null
+                else -> throw IOException("HTTP ${c.responseCode}")
+            }
         } finally {
             c.disconnect()
         }
@@ -156,7 +188,11 @@ object OnlineCovers {
     private fun download(url: String): ByteArray? {
         val c = open(url)
         return try {
-            if (c.responseCode == 200) c.inputStream.use { it.readBytes() }.takeIf { it.size > 1000 } else null
+            when (c.responseCode) {
+                200 -> c.inputStream.use { it.readBytes() }.takeIf { it.size > 1000 }
+                404 -> null
+                else -> throw IOException("HTTP ${c.responseCode}")
+            }
         } finally {
             c.disconnect()
         }

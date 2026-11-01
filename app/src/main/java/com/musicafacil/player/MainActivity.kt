@@ -430,17 +430,29 @@ private fun HomeScreen(
                 (letter == null || indexLetter(it.title) == letter)
         }
     }
-    val artists = remember(vm.artists, q) {
-        if (q.isEmpty()) vm.artists else vm.artists.filter { q in it.name.lowercase() }
+    // Letra elegida en la barra lateral de cada pestaña (cada una recuerda la suya)
+    var artistLetter by rememberSaveable { mutableStateOf<Char?>(null) }
+    var songLetter by rememberSaveable { mutableStateOf<Char?>(null) }
+    val artistLetters = remember(vm.artists) { vm.artists.map { artistIndexLetter(it.name) }.toSet() }
+    val songLetters = remember(vm.songs) { vm.songs.map { indexLetter(it.title) }.toSet() }
+    val artists = remember(vm.artists, q, artistLetter) {
+        vm.artists.filter {
+            (q.isEmpty() || q in it.name.lowercase()) &&
+                (artistLetter == null || artistIndexLetter(it.name) == artistLetter)
+        }
     }
-    val songs = remember(vm.songs, q) {
-        vm.songs
-            .filter { q.isEmpty() || q in it.title.lowercase() || q in it.artist.lowercase() || q in it.album.lowercase() }
-            .sortedBy { it.title.lowercase() }
+    val sortedSongs = remember(vm.songs) { vm.songs.sortedBy { it.title.lowercase() } }
+    val songs = remember(sortedSongs, q, songLetter) {
+        sortedSongs.filter {
+            (q.isEmpty() || q in it.title.lowercase() || q in it.artist.lowercase() || q in it.album.lowercase()) &&
+                (songLetter == null || indexLetter(it.title) == songLetter)
+        }
     }
 
 
     val pad = PaddingValues(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 20.dp)
+    // Algo más de margen a la derecha donde está la barra de letras
+    val padWithIndex = PaddingValues(start = 20.dp, end = 30.dp, top = 16.dp, bottom = 20.dp)
     val currentId = vm.currentItem?.mediaId
     val emptyLibrary: @Composable () -> Unit = {
         if (vm.loaded && vm.songs.isEmpty()) {
@@ -458,15 +470,7 @@ private fun HomeScreen(
                     Column {
                         emptyLibrary()
                         SectionHeader("${albums.size} álbumes", "orden aleatorio")
-                        if (letter != null) {
-                            Row(Modifier.padding(bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    if (albums.isEmpty()) "Ningún disco empieza por «$letter»" else "Discos que empiezan por «$letter»",
-                                    color = Gray, fontSize = 13.sp, modifier = Modifier.weight(1f),
-                                )
-                                Pill("Todos", Icons.Filled.Close) { letter = null }
-                            }
-                        }
+                        LetterFilterRow(letter, albums.isEmpty(), "disco") { letter = null }
                     }
                 }
                 // Algo más de margen a la derecha para la barra de letras
@@ -478,14 +482,31 @@ private fun HomeScreen(
                     modifier = Modifier.align(Alignment.TopEnd).padding(top = 52.dp, bottom = 12.dp).fillMaxHeight(),
                 )
             }
-            Tab.Artists -> LazyColumn(Modifier.fillMaxSize(), contentPadding = pad) {
-                item { emptyLibrary(); SectionHeader("${artists.size} artistas", null) }
-                itemsIndexed(artists, key = { _, a -> a.name }) { i, artist ->
-                    ArtistRow(artist, Modifier.animateItem(placementSpec = bouncy()).grouped(i, artists.size)) { onArtist(artist.name) }
+            Tab.Artists -> Box(Modifier.fillMaxSize()) {
+                LazyColumn(Modifier.fillMaxSize(), contentPadding = padWithIndex) {
+                    item {
+                        emptyLibrary()
+                        SectionHeader("${artists.size} artistas", null)
+                        LetterFilterRow(artistLetter, artists.isEmpty(), "artista") { artistLetter = null }
+                    }
+                    itemsIndexed(artists, key = { _, a -> a.name }) { i, artist ->
+                        ArtistRow(artist, Modifier.animateItem(placementSpec = bouncy()).grouped(i, artists.size)) { onArtist(artist.name) }
+                    }
                 }
+                LetterScrubber(
+                    available = artistLetters,
+                    selected = artistLetter,
+                    onSelect = { artistLetter = it },
+                    modifier = Modifier.align(Alignment.TopEnd).padding(top = 52.dp, bottom = 12.dp).fillMaxHeight(),
+                )
             }
-            Tab.Songs -> LazyColumn(Modifier.fillMaxSize(), contentPadding = pad) {
-                item { emptyLibrary(); SectionHeader("${songs.size} canciones", null) }
+            Tab.Songs -> Box(Modifier.fillMaxSize()) {
+              LazyColumn(Modifier.fillMaxSize(), contentPadding = padWithIndex) {
+                item {
+                    emptyLibrary()
+                    SectionHeader("${songs.size} canciones", null)
+                    LetterFilterRow(songLetter, songs.isEmpty(), "canción") { songLetter = null }
+                }
                 itemsIndexed(songs, key = { _, s -> s.id }) { i, song ->
                     SongRow(
                         leading = { AlbumArt(song.albumId, Modifier.size(44.dp), sizePx = 150, shape = RoundedCornerShape(6.dp)) },
@@ -499,6 +520,13 @@ private fun HomeScreen(
                         SongMenu(vm, song)
                     }
                 }
+              }
+              LetterScrubber(
+                  available = songLetters,
+                  selected = songLetter,
+                  onSelect = { songLetter = it },
+                  modifier = Modifier.align(Alignment.TopEnd).padding(top = 52.dp, bottom = 12.dp).fillMaxHeight(),
+              )
             }
             Tab.Playlists -> LazyColumn(Modifier.fillMaxSize(), contentPadding = pad) {
                 item { SectionHeader("${vm.playlists.size} playlists", null) }
@@ -717,6 +745,23 @@ private fun AlbumViewMenu(vm: MainViewModel) {
 }
 
 private val IndexLetters = listOf('#') + ('A'..'Z')
+
+/** Letra de un artista en el índice: "The Beatles" va en la B. */
+private fun artistIndexLetter(name: String) =
+    indexLetter(if (name.startsWith("the ", ignoreCase = true)) name.substring(4) else name)
+
+/** Aviso "… que empiezan por X" con botón para quitar el filtro de letra. */
+@Composable
+private fun LetterFilterRow(letter: Char?, empty: Boolean, noun: String, onClear: () -> Unit) {
+    if (letter == null) return
+    Row(Modifier.padding(bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            if (empty) "Ningún $noun empieza por «$letter»" else "Empiezan por «$letter»",
+            color = Gray, fontSize = 13.sp, modifier = Modifier.weight(1f),
+        )
+        Pill("Todos", Icons.Filled.Close, onClick = onClear)
+    }
+}
 
 /** Barra de letras del borde derecho: tocar o deslizar elige la letra; tocar la misma la quita. */
 @Composable
