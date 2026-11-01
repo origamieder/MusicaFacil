@@ -292,22 +292,26 @@ private fun App(vm: MainViewModel = viewModel()) {
             bottomBar = {
                 AnimatedVisibility(
                     visible = !showPlayer && !showQueue && vm.currentItem != null,
-                    enter = if (miniFromPlayer) fadeIn(tween(1))
-                    else slideInVertically(bouncy(Spring.StiffnessLow)) { it } + fadeIn(tween(200)),
-                    exit = slideOutVertically(tween(180)) { it } + fadeOut(tween(150)),
+                    // Al abrir o cerrar el reproductor aparece/desaparece al instante: si se animara,
+                    // cambiaría el hueco de abajo a mitad de la transición y la pantalla daría un salto
+                    enter = if (miniFromPlayer) EnterTransition.None
+                    else slideInVertically(tween(260, easing = FastOutSlowInEasing)) { it } + fadeIn(tween(200)),
+                    exit = if (showPlayer || showQueue) ExitTransition.None
+                    else slideOutVertically(tween(200)) { it } + fadeOut(tween(150)),
                 ) { MiniPlayer(vm) { miniFromPlayer = false; showPlayer = true } }
             },
         ) { padding ->
             AnimatedContent(
                 targetState = screen,
-                modifier = Modifier.padding(padding).fillMaxSize(),
+                modifier = Modifier.fillMaxSize(),
                 transitionSpec = {
                     when {
                         // Las salidas del reproductor ya tienen su propia animación (gestos)
                         initialState == "player" || initialState == "queue" || targetState == "queue" ->
                             EnterTransition.None togetherWith ExitTransition.None
+                        // El reproductor sube suave, sin rebote
                         targetState == "player" ->
-                            (slideInVertically(bouncy(Spring.StiffnessLow)) { it / 3 } + fadeIn(tween(180))) togetherWith
+                            (slideInVertically(tween(320, easing = FastOutSlowInEasing)) { it / 4 } + fadeIn(tween(200))) togetherWith
                                 fadeOut(tween(150))
                         else ->
                             (fadeIn(tween(220)) + scaleIn(bouncy(Spring.StiffnessMediumLow), initialScale = 0.94f)) togetherWith
@@ -316,7 +320,14 @@ private fun App(vm: MainViewModel = viewModel()) {
                 },
                 label = "pantalla",
             ) { s ->
+                // El reproductor y la cola ocupan toda la pantalla y no dependen del mini reproductor,
+                // así no se mueven cuando este aparece o desaparece
+                val fullScreen = s == "player" || s == "queue"
                 stateHolder.SaveableStateProvider(s) {
+                  Box(
+                    if (fullScreen) Modifier.fillMaxSize().padding(top = padding.calculateTopPadding()).navigationBarsPadding()
+                    else Modifier.fillMaxSize().padding(padding)
+                  ) {
                     when {
                         s == "folders" -> FoldersScreen(vm) { showFolders = false }
                         s == "queue" -> QueueScreen(vm) { showQueue = false }
@@ -368,6 +379,7 @@ private fun App(vm: MainViewModel = viewModel()) {
                             onFolders = { showFolders = true },
                         )
                     }
+                  }
                 }
             }
         }
@@ -1589,7 +1601,7 @@ private fun MiniPlayer(vm: MainViewModel, onOpen: () -> Unit) {
             .clip(shape)
             .background(Surface2)
             .border(1.dp, Color(0xFF2E2E2E), shape)
-            .bouncyClick(0.97f, onClick = onOpen)
+            .clickable(onClick = onOpen)
     ) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = MiniInnerX, vertical = MiniInnerY),
