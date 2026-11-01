@@ -172,6 +172,38 @@ fun GlowingAlbumArt(
     }
 }
 
+/**
+ * Resplandor de fondo con los colores de una portada, muy tenue: da algo de color y
+ * profundidad a la parte de arriba de las pantallas sin quitar protagonismo al contenido.
+ */
+@Composable
+fun AmbientBackdrop(albumId: Long?, modifier: Modifier = Modifier) {
+    val small = rememberAlbumArt(albumId, 150)
+    var glow by remember { mutableStateOf(albumId?.let { GlowCache.get(it) }) }
+    LaunchedEffect(albumId, small) {
+        val cached = albumId?.let { GlowCache.get(it) }
+        glow = cached ?: small?.let { s ->
+            withContext(Dispatchers.Default) { glowBitmap(s) }.also { g -> albumId?.let { GlowCache.put(it, g) } }
+        }
+    }
+    Crossfade(targetState = glow, animationSpec = tween(700), label = "ambiente", modifier = modifier) { g ->
+        if (g != null) {
+            Image(
+                g, contentDescription = null,
+                contentScale = ContentScale.FillBounds,
+                filterQuality = FilterQuality.Low,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        scaleX = 1.4f
+                        alpha = 0.28f
+                    }
+                    .blur(60.dp, BlurredEdgeTreatment.Unbounded),
+            )
+        }
+    }
+}
+
 /** Carátula del álbum (de la etiqueta del archivo o cover.jpg), con caché en memoria. */
 @Composable
 fun AlbumArt(

@@ -18,6 +18,30 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
+import androidx.compose.ui.composed
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -39,6 +63,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
@@ -110,7 +135,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme(colorScheme = AppColors, typography = AppType) {
-                Surface(Modifier.fillMaxSize(), color = Black) { App() }
+                Surface(Modifier.fillMaxSize(), color = Bg) { App() }
             }
         }
     }
@@ -122,21 +147,26 @@ private val Black = Color(0xFF000000)
 private val White = Color(0xFFFFFFFF)
 private val Gray = Color(0xFF8E8E8E)
 private val DarkGray = Color(0xFF4A4A4A)
-private val Card = Color(0xFF141414)
-private val Line = Color(0xFF262626)
+private val Card = Color(0xFF171717)
+private val Line = Color(0xFF242424)
+
+// Capas de fondo: no todo negro, para que se distingan las secciones
+private val Bg = Color(0xFF080808)
+private val Surface1 = Color(0xFF121212)
+private val Surface2 = Color(0xFF1C1C1C)
 
 private val AppColors = darkColorScheme(
     primary = White,
     onPrimary = Black,
     secondary = White,
     onSecondary = Black,
-    background = Black,
+    background = Bg,
     onBackground = White,
-    surface = Black,
+    surface = Bg,
     onSurface = White,
     surfaceVariant = Card,
     onSurfaceVariant = Gray,
-    surfaceContainer = Color(0xFF0C0C0C),
+    surfaceContainer = Surface2,
     outline = Line,
 )
 
@@ -194,13 +224,14 @@ private fun App(vm: MainViewModel = viewModel()) {
     var showQueue by rememberSaveable { mutableStateOf(false) }
     var showFolders by rememberSaveable { mutableStateOf(false) }
     var reveal by remember { mutableFloatStateOf(0f) }
+    var miniFromPlayer by remember { mutableStateOf(false) }
     LaunchedEffect(showPlayer) { if (!showPlayer) reveal = 0f }
 
     BackHandler(enabled = showFolders || showQueue || showPlayer || openAlbumId != null || openPlaylistId != null || openArtist != null) {
         when {
             showFolders -> showFolders = false
             showQueue -> showQueue = false
-            showPlayer -> showPlayer = false
+            showPlayer -> { miniFromPlayer = true; showPlayer = false }
             openAlbumId != null -> openAlbumId = null
             openPlaylistId != null -> openPlaylistId = null
             else -> openArtist = null
@@ -224,58 +255,117 @@ private fun App(vm: MainViewModel = viewModel()) {
     }
 
     val goArtist: (String) -> Unit = { openArtist = it; openAlbumId = null; showPlayer = false; showQueue = false }
+    // Si el mini reproductor aparece porque se cierra el reproductor, va sin animación de entrada
+    // (la portada ya ha "volado" hasta su sitio)
+    val closePlayer = { miniFromPlayer = true; showPlayer = false }
 
-    Scaffold(
-        containerColor = Black,
-        bottomBar = {
-            if (!showPlayer && !showQueue && vm.currentItem != null) MiniPlayer(vm) { showPlayer = true }
-        },
-    ) { padding ->
-        Box(Modifier.padding(padding).fillMaxSize()) {
-            val album = openAlbumId?.let { vm.album(it) }
-            val artist = openArtist?.let { vm.artist(it) }
-            val playlist = openPlaylistId?.let { vm.playlist(it) }
-            when {
-                showFolders -> FoldersScreen(vm) { showFolders = false }
-                showQueue -> QueueScreen(vm) { showQueue = false }
-                showPlayer -> Box(Modifier.fillMaxSize()) {
-                    // Al deslizar hacia abajo, debajo aparece el disco actual, de borroso a nítido
-                    val underAlbum = vm.currentItem?.mediaMetadata?.extras?.getLong(EXTRA_ALBUM_ID)?.let { vm.album(it) }
-                    val showUnder by remember { derivedStateOf { reveal > 0.001f } }
-                    if (showUnder && underAlbum != null) {
-                        Box(
-                            Modifier.fillMaxSize().graphicsLayer {
-                                alpha = reveal
-                                val r = (1f - reveal) * 28.dp.toPx()
-                                renderEffect = if (r > 0.5f) BlurEffect(r, r, TileMode.Decal) else null
-                            }
-                        ) {
-                            AlbumScreen(vm, underAlbum, onArtist = goArtist) {}
-                        }
+    // Pantalla actual como texto: permite animar el paso de una a otra y recordar el estado de cada una
+    val screen = when {
+        showFolders -> "folders"
+        showQueue -> "queue"
+        showPlayer -> "player"
+        openAlbumId != null && vm.album(openAlbumId!!) != null -> "album:$openAlbumId"
+        openPlaylistId != null && vm.playlist(openPlaylistId!!) != null -> "playlist:$openPlaylistId"
+        openArtist != null && vm.artist(openArtist!!) != null -> "artist:$openArtist"
+        else -> "home"
+    }
+    // Resplandor de fondo: el disco abierto, el artista abierto o lo que está sonando
+    val ambientAlbum = when {
+        screen.startsWith("album:") -> openAlbumId
+        screen.startsWith("artist:") -> openArtist?.let { vm.artist(it) }?.albums?.firstOrNull()?.id
+        else -> vm.currentItem?.mediaMetadata?.extras?.getLong(EXTRA_ALBUM_ID)
+    }
+    val stateHolder = rememberSaveableStateHolder()
+
+    Box(
+        Modifier.fillMaxSize().background(
+            Brush.verticalGradient(0f to Color(0xFF151515), 0.45f to Bg, 1f to Bg)
+        )
+    ) {
+        AmbientBackdrop(ambientAlbum, Modifier.fillMaxWidth().height(420.dp).offset(y = (-90).dp))
+
+        Scaffold(
+            containerColor = Color.Transparent,
+            bottomBar = {
+                AnimatedVisibility(
+                    visible = !showPlayer && !showQueue && vm.currentItem != null,
+                    enter = if (miniFromPlayer) fadeIn(tween(1))
+                    else slideInVertically(bouncy(Spring.StiffnessLow)) { it } + fadeIn(tween(200)),
+                    exit = slideOutVertically(tween(180)) { it } + fadeOut(tween(150)),
+                ) { MiniPlayer(vm) { miniFromPlayer = false; showPlayer = true } }
+            },
+        ) { padding ->
+            AnimatedContent(
+                targetState = screen,
+                modifier = Modifier.padding(padding).fillMaxSize(),
+                transitionSpec = {
+                    when {
+                        // Las salidas del reproductor ya tienen su propia animación (gestos)
+                        initialState == "player" || initialState == "queue" || targetState == "queue" ->
+                            EnterTransition.None togetherWith ExitTransition.None
+                        targetState == "player" ->
+                            (slideInVertically(bouncy(Spring.StiffnessLow)) { it / 3 } + fadeIn(tween(180))) togetherWith
+                                fadeOut(tween(150))
+                        else ->
+                            (fadeIn(tween(220)) + scaleIn(bouncy(Spring.StiffnessMediumLow), initialScale = 0.94f)) togetherWith
+                                fadeOut(tween(120))
                     }
-                    PlayerScreen(
-                        vm,
-                        onArtist = goArtist,
-                        onQueue = { showQueue = true },
-                        onAlbum = { openAlbumId = it; showPlayer = false },
-                        onHome = { showPlayer = false; openAlbumId = null; openPlaylistId = null; openArtist = null },
-                        onReveal = { reveal = it },
-                    ) { showPlayer = false }
+                },
+                label = "pantalla",
+            ) { s ->
+                stateHolder.SaveableStateProvider(s) {
+                    when {
+                        s == "folders" -> FoldersScreen(vm) { showFolders = false }
+                        s == "queue" -> QueueScreen(vm) { showQueue = false }
+                        s == "player" -> Box(Modifier.fillMaxSize()) {
+                            // Al deslizar hacia abajo, debajo aparece el disco actual, de borroso a nítido
+                            val underAlbum = vm.currentItem?.mediaMetadata?.extras?.getLong(EXTRA_ALBUM_ID)?.let { vm.album(it) }
+                            val showUnder by remember { derivedStateOf { reveal > 0.001f } }
+                            if (showUnder && underAlbum != null) {
+                                Box(
+                                    Modifier.fillMaxSize().graphicsLayer {
+                                        alpha = reveal
+                                        val r = (1f - reveal) * 28.dp.toPx()
+                                        renderEffect = if (r > 0.5f) BlurEffect(r, r, TileMode.Decal) else null
+                                    }
+                                ) {
+                                    AlbumScreen(vm, underAlbum, onArtist = goArtist) {}
+                                }
+                            }
+                            PlayerScreen(
+                                vm,
+                                onArtist = { miniFromPlayer = true; goArtist(it) },
+                                onQueue = { showQueue = true },
+                                onAlbum = { miniFromPlayer = true; openAlbumId = it; showPlayer = false },
+                                onHome = {
+                                    miniFromPlayer = true
+                                    showPlayer = false; openAlbumId = null; openPlaylistId = null; openArtist = null
+                                },
+                                onReveal = { reveal = it },
+                            ) { closePlayer() }
+                        }
+                        s.startsWith("album:") -> vm.album(s.substringAfter(':').toLong())?.let {
+                            AlbumScreen(vm, it, onArtist = goArtist) { openAlbumId = null }
+                        }
+                        s.startsWith("playlist:") -> vm.playlist(s.substringAfter(':').toLong())?.let {
+                            PlaylistScreen(vm, it) { openPlaylistId = null }
+                        }
+                        s.startsWith("artist:") -> vm.artist(s.substringAfter(':'))?.let {
+                            ArtistScreen(
+                                vm, it,
+                                onAlbum = { a -> openAlbumId = a.id },
+                                onRenamed = { name -> openArtist = name },
+                            ) { openArtist = null }
+                        }
+                        else -> HomeScreen(
+                            vm,
+                            onAlbum = { openAlbumId = it.id },
+                            onArtist = goArtist,
+                            onPlaylist = { openPlaylistId = it },
+                            onFolders = { showFolders = true },
+                        )
+                    }
                 }
-                album != null -> AlbumScreen(vm, album, onArtist = goArtist) { openAlbumId = null }
-                playlist != null -> PlaylistScreen(vm, playlist) { openPlaylistId = null }
-                artist != null -> ArtistScreen(
-                    vm, artist,
-                    onAlbum = { openAlbumId = it.id },
-                    onRenamed = { openArtist = it },
-                ) { openArtist = null }
-                else -> HomeScreen(
-                    vm,
-                    onAlbum = { openAlbumId = it.id },
-                    onArtist = goArtist,
-                    onPlaylist = { openPlaylistId = it },
-                    onFolders = { showFolders = true },
-                )
             }
         }
     }
@@ -346,25 +436,35 @@ private fun HomeScreen(
                         color = Gray, style = MaterialTheme.typography.bodySmall,
                     )
                 }
-                IconButton(onClick = onFolders) {
-                    Icon(Icons.Filled.Settings, "Ajustes", tint = Gray)
-                }
-                Pill("Aleatorio", Icons.Filled.Shuffle, enabled = vm.songs.isNotEmpty(), onClick = vm::shuffleAll)
+                Box(
+                    Modifier.size(38.dp).clip(CircleShape).background(Surface2).bouncyClick(0.88f, onClick = onFolders),
+                    contentAlignment = Alignment.Center,
+                ) { Icon(Icons.Filled.Settings, "Ajustes", Modifier.size(20.dp), tint = White) }
+                Spacer(Modifier.width(8.dp))
+                Pill("Aleatorio", Icons.Filled.Shuffle, filled = true, enabled = vm.songs.isNotEmpty(), onClick = vm::shuffleAll)
             }
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(18.dp))
             SearchField(query) { query = it }
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(12.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Row(
-                    Modifier.weight(1f).horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(22.dp),
-                ) {
-                    Tab.entries.forEach { t ->
-                        TabLabel(t.label, t == tab) { tab = t }
-                    }
-                }
+                SegmentedTabs(
+                    labels = Tab.entries.map { it.label },
+                    selected = tab.ordinal,
+                    onSelect = { tab = Tab.entries[it] },
+                    modifier = Modifier.weight(1f),
+                )
                 if (tab == Tab.Albums) AlbumViewMenu(vm)
             }
+            Spacer(Modifier.height(18.dp))
+            SectionHeader(
+                when (tab) {
+                    Tab.Albums -> "${albums.size} álbumes"
+                    Tab.Artists -> "${artists.size} artistas"
+                    Tab.Songs -> "${songs.size} canciones"
+                    Tab.Playlists -> "${vm.playlists.size} playlists"
+                },
+                if (tab == Tab.Albums) "orden aleatorio" else null,
+            )
             if (tab == Tab.Albums && letter != null) {
                 Spacer(Modifier.height(10.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -401,19 +501,20 @@ private fun HomeScreen(
         }
         Tab.Artists -> LazyColumn(contentPadding = pad) {
             item { header() }
-            items(artists, key = { it.name }) { artist ->
-                ArtistRow(artist) { onArtist(artist.name) }
+            itemsIndexed(artists, key = { _, a -> a.name }) { i, artist ->
+                ArtistRow(artist, Modifier.animateItem(placementSpec = bouncy()).grouped(i, artists.size)) { onArtist(artist.name) }
             }
         }
         Tab.Songs -> LazyColumn(contentPadding = pad) {
             item { header() }
             itemsIndexed(songs, key = { _, s -> s.id }) { i, song ->
                 SongRow(
-                    leading = { AlbumArt(song.albumId, Modifier.size(44.dp), sizePx = 150, shape = RoundedCornerShape(4.dp)) },
+                    leading = { AlbumArt(song.albumId, Modifier.size(44.dp), sizePx = 150, shape = RoundedCornerShape(6.dp)) },
                     title = song.title,
                     subtitle = "${song.artist} · ${song.album}",
                     playing = song.id.toString() == currentId,
                     onClick = { vm.playSongs(songs, i) },
+                    modifier = Modifier.grouped(i, songs.size),
                 ) {
                     Duration(song)
                     SongMenu(vm, song)
@@ -422,19 +523,22 @@ private fun HomeScreen(
         }
         Tab.Playlists -> LazyColumn(contentPadding = pad) {
             item { header() }
-            items(vm.playlists, key = { it.id }) { p ->
-                PlaylistRow(vm, p) { onPlaylist(p.id) }
+            itemsIndexed(vm.playlists, key = { _, p -> p.id }) { i, p ->
+                PlaylistRow(vm, p, Modifier.animateItem(placementSpec = bouncy()).grouped(i, vm.playlists.size)) { onPlaylist(p.id) }
             }
             item {
+                Spacer(Modifier.height(12.dp))
                 Row(
-                    Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable { creating = true }
-                        .padding(vertical = 8.dp),
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Surface1)
+                        .border(1.dp, Line, RoundedCornerShape(18.dp))
+                        .bouncyClick(0.97f) { creating = true }
+                        .padding(12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Box(
-                        Modifier.size(56.dp).clip(RoundedCornerShape(6.dp)).background(Card),
+                        Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)).background(White),
                         contentAlignment = Alignment.Center,
-                    ) { Icon(Icons.Filled.Add, null, tint = White) }
+                    ) { Icon(Icons.Filled.Add, null, tint = Black) }
                     Spacer(Modifier.width(14.dp))
                     Text("Nueva playlist", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                 }
@@ -447,25 +551,30 @@ private fun HomeScreen(
 private fun PlaylistCover(vm: MainViewModel, playlist: Playlist, modifier: Modifier) {
     val first = vm.songsOf(playlist).firstOrNull()
     if (playlist.isFavorites || first == null) {
-        Box(modifier.clip(RoundedCornerShape(6.dp)).background(Card), contentAlignment = Alignment.Center) {
+        Box(
+            modifier.clip(RoundedCornerShape(10.dp)).background(
+                Brush.linearGradient(listOf(Color(0xFF2C2C2C), Color(0xFF151515)))
+            ),
+            contentAlignment = Alignment.Center,
+        ) {
             Icon(
                 if (playlist.isFavorites) Icons.Filled.Favorite else Icons.AutoMirrored.Filled.QueueMusic,
                 null, Modifier.fillMaxSize(0.4f), tint = White,
             )
         }
     } else {
-        AlbumArt(first.albumId, modifier, sizePx = 200)
+        AlbumArt(first.albumId, modifier, sizePx = 200, shape = RoundedCornerShape(10.dp))
     }
 }
 
 @Composable
-private fun PlaylistRow(vm: MainViewModel, playlist: Playlist, onClick: () -> Unit) {
+private fun PlaylistRow(vm: MainViewModel, playlist: Playlist, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable(onClick = onClick)
-            .padding(vertical = 8.dp),
+        modifier.fillMaxWidth().bouncyClick(0.98f, onClick = onClick)
+            .padding(vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        PlaylistCover(vm, playlist, Modifier.size(56.dp))
+        PlaylistCover(vm, playlist, Modifier.size(52.dp))
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Text(playlist.name, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -497,20 +606,21 @@ private fun AlbumGrid(
             AlbumView.Large -> GridCells.Adaptive(150.dp)
         },
         contentPadding = pad,
-        horizontalArrangement = Arrangement.spacedBy(if (view == AlbumView.Small) 10.dp else 14.dp),
+        horizontalArrangement = Arrangement.spacedBy(if (view == AlbumView.Small) 10.dp else 12.dp),
         verticalArrangement = Arrangement.spacedBy(
             when (view) {
-                AlbumView.List -> 2.dp
+                AlbumView.List -> 0.dp
                 AlbumView.Small -> 12.dp
-                else -> 18.dp
+                else -> 12.dp
             }
         ),
     ) {
         item(span = { GridItemSpan(maxLineSpan) }) { header() }
-        items(albums, key = { it.id }) { album ->
+        itemsIndexed(albums, key = { _, a -> a.id }) { i, album ->
             val long = onLongAlbum?.let { { it(album) } }
-            if (view == AlbumView.List) AlbumListRow(album, subtitle(album), long) { onAlbum(album) }
-            else AlbumCard(album, view, subtitle(album), long) { onAlbum(album) }
+            val anim = Modifier.animateItem(fadeInSpec = tween(220), placementSpec = bouncy(), fadeOutSpec = tween(120))
+            if (view == AlbumView.List) AlbumListRow(album, subtitle(album), long, anim.grouped(i, albums.size)) { onAlbum(album) }
+            else AlbumCard(album, view, subtitle(album), long, anim) { onAlbum(album) }
         }
     }
 }
@@ -572,6 +682,8 @@ private fun LetterScrubber(
     Box(modifier) {
         Column(
             Modifier.fillMaxHeight().width(24.dp)
+                .clip(CircleShape).background(Surface1.copy(alpha = 0.85f))
+                .padding(vertical = 6.dp)
                 .onSizeChanged { height = it.height.coerceAtLeast(1) }
                 .pointerInput(Unit) {
                     detectTapGestures { o ->
@@ -607,30 +719,42 @@ private fun LetterScrubber(
                 )
             }
         }
-        // Letra grande junto al dedo mientras se desliza
-        dragging?.let { l ->
-            val density = LocalDensity.current
+        // Letra grande junto al dedo mientras se desliza (aparece con un rebote)
+        var lastLetter by remember { mutableStateOf('A') }
+        dragging?.let { lastLetter = it }
+        val density = LocalDensity.current
+        AnimatedVisibility(
+            visible = dragging != null,
+            enter = scaleIn(spring(dampingRatio = 0.45f, stiffness = 600f)) + fadeIn(tween(100)),
+            exit = scaleOut(tween(150)) + fadeOut(tween(150)),
+            modifier = Modifier.offset {
+                IntOffset(with(density) { (-76).dp.roundToPx() }, (dragY - with(density) { 28.dp.toPx() }).toInt())
+            },
+        ) {
             Box(
-                Modifier
-                    .offset { IntOffset(with(density) { (-76).dp.roundToPx() }, (dragY - with(density) { 28.dp.toPx() }).toInt()) }
-                    .size(56.dp)
-                    .background(White, CircleShape),
+                Modifier.size(56.dp).background(White, CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(l.toString(), color = Black, fontSize = 28.sp, fontWeight = FontWeight.Bold)
+                Text(lastLetter.toString(), color = Black, fontSize = 28.sp, fontWeight = FontWeight.Bold)
             }
         }
     }
 }
 
 @Composable
-private fun AlbumListRow(album: Album, subtitle: String, onLongClick: (() -> Unit)?, onClick: () -> Unit) {
+private fun AlbumListRow(
+    album: Album,
+    subtitle: String,
+    onLongClick: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).combinedClickable(onLongClick = onLongClick, onClick = onClick)
-            .padding(vertical = 6.dp),
+        modifier.fillMaxWidth().bouncyClick(0.98f, onLongClick = onLongClick, onClick = onClick)
+            .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AlbumArt(album.id, Modifier.size(56.dp), sizePx = 200, shape = RoundedCornerShape(4.dp))
+        AlbumArt(album.id, Modifier.size(52.dp), sizePx = 200, shape = RoundedCornerShape(8.dp))
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Text(album.title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -645,7 +769,8 @@ private fun AlbumListRow(album: Album, subtitle: String, onLongClick: (() -> Uni
 @Composable
 private fun SearchField(value: String, onChange: (String) -> Unit) {
     Row(
-        Modifier.fillMaxWidth().height(46.dp).clip(RoundedCornerShape(10.dp)).background(Card)
+        Modifier.fillMaxWidth().height(46.dp).clip(RoundedCornerShape(14.dp)).background(Surface2)
+            .border(1.dp, Line, RoundedCornerShape(14.dp))
             .padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -685,13 +810,23 @@ private fun TabLabel(text: String, selected: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun AlbumCard(album: Album, view: AlbumView, subtitle: String, onLongClick: (() -> Unit)?, onClick: () -> Unit) {
+private fun AlbumCard(
+    album: Album,
+    view: AlbumView,
+    subtitle: String,
+    onLongClick: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
     val small = view == AlbumView.Small
-    Column(Modifier.combinedClickable(onLongClick = onLongClick, onClick = onClick)) {
+    // En las vistas mediana y grande, cada disco es una pequeña tarjeta
+    val tile = if (small) Modifier else Modifier.clip(RoundedCornerShape(16.dp)).background(Surface1)
+        .border(1.dp, Line, RoundedCornerShape(16.dp)).padding(8.dp)
+    Column(modifier.bouncyClick(0.94f, onLongClick = onLongClick, onClick = onClick).then(tile)) {
         AlbumArt(
             album.id, Modifier.fillMaxWidth().aspectRatio(1f),
             sizePx = if (view == AlbumView.Large) 400 else 250,
-            shape = RoundedCornerShape(if (small) 4.dp else 6.dp),
+            shape = RoundedCornerShape(if (small) 8.dp else 10.dp),
         )
         Spacer(Modifier.height(if (small) 5.dp else 8.dp))
         Text(
@@ -702,17 +837,22 @@ private fun AlbumCard(album: Album, view: AlbumView, subtitle: String, onLongCli
             subtitle, fontSize = if (view == AlbumView.Medium) 12.sp else 13.sp,
             color = Gray, maxLines = 1, overflow = TextOverflow.Ellipsis,
         )
+        if (!small) Spacer(Modifier.height(2.dp))
     }
 }
 
 @Composable
-private fun ArtistRow(artist: Artist, onClick: () -> Unit) {
+private fun ArtistRow(artist: Artist, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable(onClick = onClick)
-            .padding(vertical = 8.dp),
+        modifier.fillMaxWidth().bouncyClick(0.98f, onClick = onClick)
+            .padding(vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AlbumArt(artist.albums.first().id, Modifier.size(56.dp), sizePx = 200, shape = CircleShape)
+        AlbumArt(
+            artist.albums.first().id,
+            Modifier.size(50.dp).border(1.5.dp, Line, CircleShape),
+            sizePx = 200, shape = CircleShape,
+        )
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Text(artist.name, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -766,14 +906,26 @@ private fun ArtistScreen(
                         MenuAction("Renombrar o unir artista", Icons.Filled.Edit) { renaming = true },
                     )
                 }
-                Spacer(Modifier.height(12.dp))
-                Text(artist.name, style = MaterialTheme.typography.headlineLarge)
-                Text(countLabel(artist), color = Gray, style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    AlbumArt(
+                        artist.albums.firstOrNull()?.id,
+                        Modifier.size(92.dp).border(2.dp, Surface2, CircleShape),
+                        sizePx = 300, shape = CircleShape,
+                    )
+                    Spacer(Modifier.width(16.dp))
+                    Column {
+                        Text(artist.name, style = MaterialTheme.typography.headlineSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Text(countLabel(artist), color = Gray, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
                 Spacer(Modifier.height(16.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Pill("Reproducir", Icons.Filled.PlayArrow, filled = true) { vm.playArtist(artist, shuffle = false) }
                     Pill("Aleatorio", Icons.Filled.Shuffle) { vm.playArtist(artist, shuffle = true) }
                 }
+                Spacer(Modifier.height(22.dp))
+                SectionHeader("Discografía", "${artist.albums.size} · por año")
             }
         },
         onAlbum = onAlbum,
@@ -800,15 +952,15 @@ private fun AlbumScreen(vm: MainViewModel, album: Album, onArtist: (String) -> U
                     MenuAction("Buscar portada en internet", Icons.Filled.ImageSearch) { vm.retryCovers(album.id) },
                 )
             }
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(8.dp))
             Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                AlbumArt(album.id, Modifier.fillMaxWidth(0.72f).aspectRatio(1f), sizePx = 900)
+                GlowingAlbumArt(album.id, playing = false, modifier = Modifier.fillMaxWidth(0.66f).aspectRatio(1f))
             }
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(28.dp))
             Text(album.title, style = MaterialTheme.typography.headlineSmall)
             Text(
                 album.artist, fontSize = 16.sp, fontWeight = FontWeight.Medium,
-                modifier = Modifier.clickable { onArtist(album.artist) }.padding(vertical = 2.dp),
+                modifier = Modifier.bouncyClick(0.95f) { onArtist(album.artist) }.padding(vertical = 2.dp),
             )
             Text(
                 listOfNotNull(
@@ -823,7 +975,8 @@ private fun AlbumScreen(vm: MainViewModel, album: Album, onArtist: (String) -> U
                 Pill("Reproducir", Icons.Filled.PlayArrow, filled = true) { vm.playAlbum(album) }
                 Pill("Aleatorio", Icons.Filled.Shuffle) { vm.playAlbum(album, shuffle = true) }
             }
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(24.dp))
+            SectionHeader("Canciones", null)
         }
         itemsIndexed(album.songs, key = { _, s -> s.id }) { i, song ->
             val playing = song.id.toString() == currentId
@@ -841,6 +994,7 @@ private fun AlbumScreen(vm: MainViewModel, album: Album, onArtist: (String) -> U
                 subtitle = song.artist.takeIf { it != album.artist },
                 playing = playing,
                 onClick = { vm.playAlbum(album, startIndex = i) },
+                modifier = Modifier.grouped(i, album.songs.size),
             ) {
                 Duration(song)
                 SongMenu(vm, song)
@@ -860,8 +1014,8 @@ private fun SongRow(
     trailing: @Composable RowScope.() -> Unit,
 ) {
     Row(
-        modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable(onClick = onClick)
-            .padding(vertical = 6.dp),
+        modifier.fillMaxWidth().bouncyClick(0.98f, onClick = onClick)
+            .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         leading()
@@ -1014,7 +1168,7 @@ private fun PlaylistScreen(vm: MainViewModel, playlist: Playlist, onBack: () -> 
                     subtitle = song.artist,
                     playing = song.id.toString() == currentId,
                     onClick = { vm.playPlaylist(playlist, startIndex = i) },
-                    modifier = Modifier.background(if (dragging) Card else Black, RoundedCornerShape(8.dp)),
+                    modifier = Modifier.grouped(i, songs.size, lifted = dragging),
                 ) {
                     SongMenu(vm, song, playlist.id)
                     Icon(
@@ -1373,35 +1527,50 @@ private fun rememberProgress(vm: MainViewModel): Pair<Long, Long> {
 private fun MiniPlayer(vm: MainViewModel, onOpen: () -> Unit) {
     val meta = vm.currentItem?.mediaMetadata ?: return
     val (position, duration) = rememberProgress(vm)
-    Column(Modifier.background(Color(0xFF0E0E0E)).navigationBarsPadding()) {
-        Box(Modifier.fillMaxWidth().height(2.dp).background(Line)) {
-            Box(
-                Modifier.fillMaxWidth(if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f)
-                    .fillMaxHeight().background(White)
-            )
-        }
+    val shape = RoundedCornerShape(20.dp)
+    // Tarjeta flotante sobre el contenido (las medidas de aquí las usa también el gesto ↓ del reproductor)
+    Column(
+        Modifier.navigationBarsPadding()
+            .padding(horizontal = MiniOuterX, vertical = MiniOuterY)
+            .shadow(18.dp, shape)
+            .clip(shape)
+            .background(Surface2)
+            .border(1.dp, Color(0xFF2E2E2E), shape)
+            .bouncyClick(0.97f, onClick = onOpen)
+    ) {
         Row(
-            Modifier.fillMaxWidth().clickable(onClick = onOpen).padding(horizontal = 14.dp, vertical = 10.dp),
+            Modifier.fillMaxWidth().padding(horizontal = MiniInnerX, vertical = MiniInnerY),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            AlbumArt(meta.extras?.getLong(EXTRA_ALBUM_ID), Modifier.size(44.dp), sizePx = 150, shape = RoundedCornerShape(4.dp))
+            AlbumArt(meta.extras?.getLong(EXTRA_ALBUM_ID), Modifier.size(MiniArt), sizePx = 150, shape = RoundedCornerShape(8.dp))
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(meta.title?.toString() ?: "", maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                 Text(meta.artist?.toString() ?: "", maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 13.sp, color = Gray)
             }
             IconButton(onClick = vm::togglePlay) {
-                Icon(
-                    if (vm.playWhenReady) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                    if (vm.playWhenReady) "Pausa" else "Reproducir", Modifier.size(30.dp),
-                )
+                PlayPauseIcon(vm.playWhenReady, Modifier.size(30.dp), White)
             }
             IconButton(onClick = { vm.next() }) {
                 Icon(Icons.Filled.SkipNext, "Siguiente", Modifier.size(28.dp))
             }
         }
+        Box(Modifier.fillMaxWidth().height(MiniBar).background(Line)) {
+            Box(
+                Modifier.fillMaxWidth(if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f)
+                    .fillMaxHeight().background(White)
+            )
+        }
     }
 }
+
+// Medidas del mini reproductor
+private val MiniOuterX = 10.dp
+private val MiniOuterY = 8.dp
+private val MiniInnerX = 10.dp
+private val MiniInnerY = 8.dp
+private val MiniArt = 44.dp
+private val MiniBar = 2.dp
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -1442,16 +1611,17 @@ private fun PlayerScreen(
     val navBottom = WindowInsets.navigationBars.getBottom(density).toFloat()
     val miniTarget = remember { MiniArtTarget() }
     val miniArtSize = with(density) { 44.dp.toPx() }
-    val miniArtCenterX = with(density) { (14.dp + 22.dp).toPx() }
-    val miniArtFromBottom = with(density) { (10.dp + 22.dp).toPx() }
+    val miniArtCenterX = with(density) { (MiniOuterX + MiniInnerX + MiniArt / 2).toPx() }
+    // Desde abajo: margen exterior + barra de progreso + margen interior + media portada
+    val miniArtFromBottom = with(density) { (MiniOuterY + MiniBar + MiniInnerY + MiniArt / 2).toPx() }
     LaunchedEffect(Unit) { snapshotFlow { reveal }.collect { currentOnReveal(it) } }
 
     val swipe = Modifier.pointerInput(Unit) {
         var dx = 0f
         var dy = 0f
         fun reset() {
-            scope.launch { swipeX.animateTo(0f, spring(stiffness = Spring.StiffnessMediumLow)) }
-            scope.launch { swipeY.animateTo(0f, spring(stiffness = Spring.StiffnessMediumLow)) }
+            scope.launch { swipeX.animateTo(0f, bouncy()) }
+            scope.launch { swipeY.animateTo(0f, bouncy()) }
         }
         detectDragGestures(
             onDragStart = { dx = 0f; dy = 0f },
@@ -1467,7 +1637,7 @@ private fun PlayerScreen(
                         if (dir < 0) vm.next() else vm.previousTrack()
                         // …y la nueva entra por el contrario
                         swipeX.snapTo(-dir * screenW * 0.7f)
-                        swipeX.animateTo(0f, spring(stiffness = Spring.StiffnessMediumLow))
+                        swipeX.animateTo(0f, bouncy())
                     }
                     // ↓ abre el disco: la portada termina de viajar al mini reproductor
                     !horizontal && dy > threshold && album != null -> scope.launch {
@@ -1501,7 +1671,7 @@ private fun PlayerScreen(
 
     Column(
         swipe.fillMaxSize()
-            .drawBehind { drawRect(Black.copy(alpha = 1f - reveal)) }
+            .drawBehind { drawRect(Bg.copy(alpha = 1f - reveal)) }
             .padding(horizontal = 28.dp, vertical = 8.dp)
     ) {
         Row(fade, verticalAlignment = Alignment.CenterVertically) {
@@ -1580,10 +1750,21 @@ private fun PlayerScreen(
                     Icon(Icons.AutoMirrored.Filled.PlaylistAdd, "Añadir a playlist", tint = Gray)
                 }
                 val fav = vm.isFavorite(songId)
+                // El corazón "late" al marcarlo o desmarcarlo
+                val favScale = remember { Animatable(1f) }
+                var lastFav by remember { mutableStateOf(fav) }
+                LaunchedEffect(fav) {
+                    if (fav != lastFav) {
+                        lastFav = fav
+                        favScale.snapTo(1.45f)
+                        favScale.animateTo(1f, spring(dampingRatio = 0.3f, stiffness = 500f))
+                    }
+                }
                 IconButton(onClick = { vm.toggleFavorite(songId) }, Modifier.offset(x = 8.dp)) {
                     Icon(
-                        if (fav) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
-                        if (fav) "Quitar de favoritas" else "Añadir a favoritas",
+                        modifier = Modifier.graphicsLayer { scaleX = favScale.value; scaleY = favScale.value },
+                        imageVector = if (fav) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                        contentDescription = if (fav) "Quitar de favoritas" else "Añadir a favoritas",
                         tint = if (fav) White else Gray,
                     )
                 }
@@ -1637,13 +1818,11 @@ private fun PlayerScreen(
                 Icon(Icons.Filled.SkipPrevious, "Anterior", Modifier.size(38.dp))
             }
             Box(
-                Modifier.size(72.dp).clip(CircleShape).background(White).clickable(onClick = vm::togglePlay),
+                Modifier.size(72.dp).shadow(14.dp, CircleShape).clip(CircleShape).background(White)
+                    .bouncyClick(0.86f, onClick = vm::togglePlay),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(
-                    if (vm.playWhenReady) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                    if (vm.playWhenReady) "Pausa" else "Reproducir", Modifier.size(38.dp), tint = Black,
-                )
+                PlayPauseIcon(vm.playWhenReady, Modifier.size(38.dp), Black)
             }
             IconButton(onClick = { vm.next() }, Modifier.size(56.dp)) {
                 Icon(Icons.Filled.SkipNext, "Siguiente", Modifier.size(38.dp))
@@ -1681,8 +1860,7 @@ private fun FoldersScreen(vm: MainViewModel, onBack: () -> Unit) {
             Spacer(Modifier.height(12.dp))
             Text("Ajustes", style = MaterialTheme.typography.headlineSmall)
             Spacer(Modifier.height(20.dp))
-            SectionLabel("CARPETAS DE MÚSICA")
-            Spacer(Modifier.height(6.dp))
+            SectionHeader("Carpetas de música", null)
             Text(
                 if (vm.folders.isEmpty()) "Ahora se lee la música de todo el móvil. Elige una o varias carpetas para leer solo de ahí (incluye sus subcarpetas)."
                 else "Solo se lee la música de estas carpetas y sus subcarpetas.",
@@ -1690,15 +1868,15 @@ private fun FoldersScreen(vm: MainViewModel, onBack: () -> Unit) {
             )
             Spacer(Modifier.height(20.dp))
         }
-        items(vm.folders, key = { it }) { path ->
+        itemsIndexed(vm.folders, key = { _, f -> f }) { i, path ->
             Row(
-                Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                Modifier.animateItem(placementSpec = bouncy()).grouped(i, vm.folders.size).padding(vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Box(
-                    Modifier.size(44.dp).clip(RoundedCornerShape(6.dp)).background(Card),
+                    Modifier.size(40.dp).clip(RoundedCornerShape(10.dp)).background(Surface2),
                     contentAlignment = Alignment.Center,
-                ) { Icon(Icons.Filled.Folder, null, Modifier.size(22.dp), tint = White) }
+                ) { Icon(Icons.Filled.Folder, null, Modifier.size(20.dp), tint = White) }
                 Spacer(Modifier.width(14.dp))
                 Text(folderLabel(path), Modifier.weight(1f), fontSize = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 IconButton(onClick = { vm.removeFolder(path) }) {
@@ -1715,41 +1893,26 @@ private fun FoldersScreen(vm: MainViewModel, onBack: () -> Unit) {
                 color = DarkGray, fontSize = 13.sp,
             )
             Spacer(Modifier.height(32.dp))
-            SectionLabel("PORTADAS")
-            Spacer(Modifier.height(8.dp))
-            Row(
-                Modifier.fillMaxWidth().clickable { vm.changeOnlineCovers(!vm.onlineCovers) }.padding(vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text("Buscar portadas en internet", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                    Text(
-                        "Si un disco no tiene portada, se busca en iTunes y Deezer y se guarda en el móvil.",
-                        color = Gray, fontSize = 13.sp,
-                    )
+            SectionHeader("Internet", null)
+            Column(SectionCard) {
+                SettingSwitch(
+                    "Buscar portadas",
+                    "Si un disco no tiene portada, se busca en iTunes y Deezer y se guarda en el móvil.",
+                    vm.onlineCovers, vm::changeOnlineCovers,
+                )
+                AnimatedVisibility(vm.onlineCovers) {
+                    Column {
+                        Spacer(Modifier.height(10.dp))
+                        Pill("Reintentar las que faltan", Icons.Filled.Refresh) { vm.retryCovers() }
+                    }
                 }
-                Spacer(Modifier.width(12.dp))
-                Switch(
-                    checked = vm.onlineCovers,
-                    onCheckedChange = vm::changeOnlineCovers,
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = Black, checkedTrackColor = White,
-                        uncheckedThumbColor = Gray, uncheckedTrackColor = Card, uncheckedBorderColor = DarkGray,
-                    ),
+                HorizontalDivider(Modifier.padding(vertical = 14.dp), color = Line)
+                SettingSwitch(
+                    "Buscar años de los discos",
+                    "Para los discos sin año: se busca en MusicBrainz la fecha del primer lanzamiento (el año del disco original, no el de la reedición).",
+                    vm.onlineYearsEnabled, vm::changeOnlineYears,
                 )
             }
-            if (vm.onlineCovers) {
-                Spacer(Modifier.height(12.dp))
-                Pill("Reintentar las que faltan", Icons.Filled.Refresh) { vm.retryCovers() }
-            }
-            Spacer(Modifier.height(32.dp))
-            SectionLabel("AÑOS DE LOS DISCOS")
-            Spacer(Modifier.height(8.dp))
-            SettingSwitch(
-                "Buscar años en internet",
-                "Para los discos sin año: se busca en MusicBrainz la fecha del primer lanzamiento (el año del disco original, no el de la reedición).",
-                vm.onlineYearsEnabled, vm::changeOnlineYears,
-            )
         }
     }
 }
@@ -1757,7 +1920,7 @@ private fun FoldersScreen(vm: MainViewModel, onBack: () -> Unit) {
 @Composable
 private fun SettingSwitch(title: String, description: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(
-        Modifier.fillMaxWidth().clickable { onChange(!checked) }.padding(vertical = 4.dp),
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).clickable { onChange(!checked) }.padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
@@ -1770,7 +1933,7 @@ private fun SettingSwitch(title: String, description: String, checked: Boolean, 
             onCheckedChange = onChange,
             colors = SwitchDefaults.colors(
                 checkedThumbColor = Black, checkedTrackColor = White,
-                uncheckedThumbColor = Gray, uncheckedTrackColor = Card, uncheckedBorderColor = DarkGray,
+                uncheckedThumbColor = Gray, uncheckedTrackColor = Surface2, uncheckedBorderColor = DarkGray,
             ),
         )
     }
@@ -1832,7 +1995,7 @@ private fun QueueScreen(vm: MainViewModel, onClose: () -> Unit) {
             }
             Spacer(Modifier.height(4.dp))
         }
-        items(entries, key = { it.item.mediaId }) { entry ->
+        itemsIndexed(entries, key = { _, e -> e.item.mediaId }) { i, entry ->
             ReorderableItem(reorder, key = entry.item.mediaId, enabled = canReorder) { dragging ->
                 val m = entry.item.mediaMetadata
                 SongRow(
@@ -1843,7 +2006,7 @@ private fun QueueScreen(vm: MainViewModel, onClose: () -> Unit) {
                     subtitle = m.artist?.toString(),
                     playing = false,
                     onClick = { vm.playQueueItem(entry.index) },
-                    modifier = Modifier.background(if (dragging) Card else Black, RoundedCornerShape(8.dp)),
+                    modifier = Modifier.grouped(i, entries.size, lifted = dragging),
                 ) {
                     IconButton(onClick = { vm.removeFromQueue(entry.index) }, Modifier.size(40.dp)) {
                         Icon(Icons.Filled.Close, "Quitar de la cola", Modifier.size(18.dp), tint = Gray)
@@ -1866,6 +2029,122 @@ private fun SectionLabel(text: String) {
     Text(text, fontSize = 11.sp, letterSpacing = 1.5.sp, color = Gray, fontWeight = FontWeight.SemiBold)
 }
 
+// ---------------------------------------------------------------- Movimiento y superficies
+
+/** Muelle con un poco de rebote: el "tacto" de toda la app. */
+private fun <T> bouncy(stiffness: Float = Spring.StiffnessMediumLow) =
+    spring<T>(dampingRatio = 0.6f, stiffness = stiffness)
+
+/** Pulsación blandita: el elemento se encoge un poco al pulsarlo y vuelve con un rebote. */
+private fun Modifier.bouncyClick(
+    scaleDown: Float = 0.95f,
+    onLongClick: (() -> Unit)? = null,
+    onClick: () -> Unit,
+): Modifier = composed {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        if (pressed) scaleDown else 1f,
+        spring(dampingRatio = 0.4f, stiffness = 650f),
+        label = "pulsar",
+    )
+    this
+        .graphicsLayer { scaleX = scale; scaleY = scale }
+        .combinedClickable(
+            interactionSource = interaction,
+            indication = LocalIndication.current,
+            onLongClick = onLongClick,
+            onClick = onClick,
+        )
+}
+
+/**
+ * Fondo de lista agrupada: las filas seguidas forman una tarjeta con esquinas redondeadas
+ * arriba (primera) y abajo (última) y una línea fina entre ellas.
+ * @param lifted la fila se está arrastrando: se despega como una tarjeta suelta
+ */
+private fun Modifier.grouped(index: Int, count: Int, lifted: Boolean = false): Modifier {
+    val r = 18.dp
+    val first = index == 0
+    val last = index == count - 1
+    val shape = if (lifted) RoundedCornerShape(14.dp) else RoundedCornerShape(
+        topStart = if (first) r else 0.dp, topEnd = if (first) r else 0.dp,
+        bottomStart = if (last) r else 0.dp, bottomEnd = if (last) r else 0.dp,
+    )
+    return this
+        .then(if (lifted) Modifier.shadow(16.dp, shape) else Modifier)
+        .clip(shape)
+        .background(if (lifted) Surface2 else Surface1)
+        .drawWithContent {
+            drawContent()
+            if (!first && !lifted) {
+                val inset = 16.dp.toPx()
+                drawLine(Line, Offset(inset, 0f), Offset(size.width - inset, 0f), 1.dp.toPx())
+            }
+        }
+        .padding(horizontal = 12.dp)
+}
+
+/** Tarjeta de sección (ajustes, bloques de contenido). */
+private val SectionCard = Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Surface1)
+    .border(1.dp, Line, RoundedCornerShape(18.dp)).padding(16.dp)
+
+/** Título de sección: texto en negrita con una marca a la izquierda y un detalle opcional. */
+@Composable
+private fun SectionHeader(title: String, detail: String?) {
+    Row(Modifier.fillMaxWidth().padding(bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(width = 3.dp, height = 16.dp).background(White, RoundedCornerShape(2.dp)))
+        Spacer(Modifier.width(10.dp))
+        Text(title, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+        if (detail != null) {
+            Spacer(Modifier.width(8.dp))
+            Text(detail, fontSize = 13.sp, color = Gray)
+        }
+    }
+}
+
+/** Selector de pestañas tipo píldora: la píldora blanca se desliza con rebote a la elegida. */
+@Composable
+private fun SegmentedTabs(labels: List<String>, selected: Int, onSelect: (Int) -> Unit, modifier: Modifier = Modifier) {
+    BoxWithConstraints(
+        modifier.height(40.dp).clip(CircleShape).background(Surface2)
+            .border(1.dp, Line, CircleShape).padding(4.dp)
+    ) {
+        val w = maxWidth / labels.size
+        val offset by animateDpAsState(w * selected, bouncy(Spring.StiffnessMedium), label = "pestaña")
+        Box(Modifier.offset(x = offset).width(w).fillMaxHeight().clip(CircleShape).background(White))
+        Row(Modifier.fillMaxSize()) {
+            labels.forEachIndexed { i, label ->
+                val color by animateColorAsState(if (i == selected) Black else Gray, tween(180), label = "pestañaTexto")
+                Box(
+                    Modifier.weight(1f).fillMaxHeight().clip(CircleShape).clickable { onSelect(i) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(label, color = color, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                }
+            }
+        }
+    }
+}
+
+/** Icono de play/pausa que cambia con un pequeño salto. */
+@Composable
+private fun PlayPauseIcon(playing: Boolean, modifier: Modifier, tint: Color) {
+    AnimatedContent(
+        targetState = playing,
+        transitionSpec = {
+            (scaleIn(spring(dampingRatio = 0.45f, stiffness = 600f), initialScale = 0.5f) + fadeIn(tween(90))) togetherWith
+                (scaleOut(tween(90), targetScale = 0.5f) + fadeOut(tween(90)))
+        },
+        label = "playPausa",
+    ) { p ->
+        Icon(
+            if (p) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+            if (p) "Pausa" else "Reproducir", modifier, tint = tint,
+        )
+    }
+}
+
 // ---------------------------------------------------------------- Componentes
 
 @Composable
@@ -1876,22 +2155,20 @@ private fun Pill(
     enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
-    val content: @Composable RowScope.() -> Unit = {
-        Icon(icon, null, Modifier.size(18.dp))
+    val fg = if (filled) Black else White
+    Row(
+        Modifier.height(38.dp)
+            .graphicsLayer { alpha = if (enabled) 1f else 0.4f }
+            .clip(CircleShape)
+            .background(if (filled) White else Surface2)
+            .then(if (filled) Modifier else Modifier.border(1.dp, Color(0xFF333333), CircleShape))
+            .then(if (enabled) Modifier.bouncyClick(0.9f, onClick = onClick) else Modifier)
+            .padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, Modifier.size(18.dp), tint = fg)
         Spacer(Modifier.width(6.dp))
-        Text(text, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-    }
-    val m = Modifier.height(38.dp)
-    val padding = PaddingValues(horizontal = 16.dp)
-    if (filled) {
-        Button(onClick, m, enabled = enabled, shape = CircleShape, contentPadding = padding, content = content)
-    } else {
-        OutlinedButton(
-            onClick, m, enabled = enabled, shape = CircleShape, contentPadding = padding,
-            border = BorderStroke(1.dp, if (enabled) Color(0xFF5A5A5A) else Line),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = White),
-            content = content,
-        )
+        Text(text, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = fg)
     }
 }
 
