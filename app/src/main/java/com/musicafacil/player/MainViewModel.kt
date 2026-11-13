@@ -82,6 +82,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     ).buildAsync()
 
     init {
+        EqSettings.load(app)
         viewModelScope.launch {
             playlists = withContext(Dispatchers.IO) { store.load() }
         }

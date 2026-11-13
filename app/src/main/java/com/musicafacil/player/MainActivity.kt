@@ -2350,7 +2350,7 @@ private fun PlayerScreen(
 @Composable
 private fun EqualizerScreen(onBack: () -> Unit) {
     val context = LocalContext.current
-    LaunchedEffect(Unit) { EqSettings.load(context) }
+    remember { EqSettings.load(context) } // por si aún no se ha reproducido nada
     var enabled by remember { mutableStateOf(EqSettings.enabled) }
     var preamp by remember { mutableFloatStateOf(EqSettings.preamp) }
     var preset by remember { mutableStateOf(EqSettings.preset) }
