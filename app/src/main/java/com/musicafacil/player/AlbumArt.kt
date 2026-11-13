@@ -45,6 +45,8 @@ import androidx.compose.ui.draw.BlurredEdgeTreatment
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.ImageBitmap
@@ -199,6 +201,37 @@ fun AmbientBackdrop(albumId: Long?, modifier: Modifier = Modifier) {
                         alpha = 0.28f
                     }
                     .blur(60.dp, BlurredEdgeTreatment.Unbounded),
+            )
+        }
+    }
+}
+
+/**
+ * Fondo del reproductor: la portada ampliada y muy difuminada, oscurecida por abajo
+ * para que el texto y los botones se lean bien.
+ */
+@Composable
+fun BlurredCoverBackground(albumId: Long?, modifier: Modifier = Modifier) {
+    // Una miniatura pequeña: ampliada ya queda suave, y en Android 12+ se difumina además
+    val art = rememberAlbumArt(albumId, 96)
+    Crossfade(targetState = art, animationSpec = tween(600), label = "fondo", modifier = modifier) { a ->
+        Box(Modifier.fillMaxSize()) {
+            if (a != null) {
+                Image(
+                    a, contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize().graphicsLayer { scaleX = 1.15f; scaleY = 1.15f }
+                        .blur(40.dp, BlurredEdgeTreatment.Rectangle),
+                )
+            }
+            Box(
+                Modifier.fillMaxSize().background(
+                    Brush.verticalGradient(
+                        0f to Color.Black.copy(alpha = 0.45f),
+                        0.5f to Color.Black.copy(alpha = 0.6f),
+                        1f to Color.Black.copy(alpha = 0.92f),
+                    )
+                )
             )
         }
     }

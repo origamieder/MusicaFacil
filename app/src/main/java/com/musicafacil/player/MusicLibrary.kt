@@ -27,6 +27,8 @@ data class Song(
     val modified: Long = 0,
     /** El año lo ha puesto el usuario en la app (manda sobre el del archivo). */
     val yearEdited: Boolean = false,
+    /** Cuándo se añadió el archivo al móvil (segundos), para "Añadidos recientemente". */
+    val added: Long = 0,
 ) {
     val uri: Uri get() = songUri(id)
     val isFlac: Boolean get() = path?.endsWith(".flac", ignoreCase = true) == true
@@ -103,6 +105,7 @@ object MusicLibrary {
             MediaStore.Audio.Media.DURATION,
             MediaStore.Audio.Media.YEAR,
             MediaStore.Audio.Media.DATE_MODIFIED,
+            MediaStore.Audio.Media.DATE_ADDED,
             // Ruta del archivo, para filtrar por carpeta (obsoleta pero se sigue rellenando)
             MediaStore.Audio.Media.DATA,
         ) + if (Build.VERSION.SDK_INT >= 30) arrayOf(MediaStore.Audio.Media.ALBUM_ARTIST) else emptyArray()
@@ -118,6 +121,7 @@ object MusicLibrary {
             val durCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
             val yearCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.YEAR)
             val modCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_MODIFIED)
+            val addedCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_ADDED)
             val albumArtistCol = c.getColumnIndex(MediaStore.Audio.Media.ALBUM_ARTIST)
             val dataCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA)
             while (c.moveToNext()) {
@@ -138,6 +142,7 @@ object MusicLibrary {
                     path = c.getString(dataCol),
                     year = c.getInt(yearCol).takeIf { it in 1000..9999 } ?: 0,
                     modified = c.getLong(modCol),
+                    added = c.getLong(addedCol),
                 )
             }
         }

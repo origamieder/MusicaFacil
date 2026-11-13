@@ -183,6 +183,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun album(id: Long): Album? = albums.firstOrNull { it.id == id }
+    fun song(id: Long): Song? = songById[id]
+
+    /** Discos ordenados por la fecha en que se añadieron al móvil (los más nuevos primero). */
+    fun recentAlbums(): List<Album> = albums.sortedByDescending { a -> a.songs.maxOfOrNull { it.added } ?: 0 }
+
+    /** Avanza o retrocede dentro de la canción (mantener pulsado siguiente/anterior). */
+    fun seekBy(ms: Long) {
+        val c = controller ?: return
+        val dur = c.duration.takeIf { it > 0 } ?: return
+        c.seekTo((c.currentPosition + ms).coerceIn(0, dur - 500))
+    }
     fun artist(name: String): Artist? = artists.firstOrNull { artistKey(it.name) == artistKey(name) }
 
     // --- Vista de álbumes ---
