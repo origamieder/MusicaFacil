@@ -54,6 +54,8 @@ import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.Canvas
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.graphics.StrokeCap
+import kotlin.math.roundToInt
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -243,15 +245,17 @@ private fun App(vm: MainViewModel = viewModel()) {
     var openFolder by rememberSaveable { mutableStateOf<String?>(null) } // "" = lista de carpetas de inicio
     var showSearch by rememberSaveable { mutableStateOf(false) }
     var showRecent by rememberSaveable { mutableStateOf(false) }
+    var showEq by rememberSaveable { mutableStateOf(false) }
     val folderRoots = remember(vm.songs, vm.folders) { Folders.roots(vm.songs, vm.folders) }
     val openFolders = { openFolder = if (folderRoots.size == 1) folderRoots.first() else "" }
 
     BackHandler(
-        enabled = showFolders || showQueue || showPlayer || openAlbumId != null || openPlaylistId != null ||
+        enabled = showFolders || showEq || showQueue || showPlayer || openAlbumId != null || openPlaylistId != null ||
             openArtist != null || openFolder != null || showSearch || showRecent || libraryTab != null
     ) {
         when {
             showFolders -> showFolders = false
+            showEq -> showEq = false
             showQueue -> showQueue = false
             showPlayer -> { miniFromPlayer = true; showPlayer = false }
             openAlbumId != null -> openAlbumId = null
@@ -292,6 +296,7 @@ private fun App(vm: MainViewModel = viewModel()) {
     // Pantalla actual como texto: permite animar el paso de una a otra y recordar el estado de cada una
     val screen = when {
         showFolders -> "folders"
+        showEq -> "eq"
         showQueue -> "queue"
         showPlayer -> "player"
         openAlbumId != null && vm.album(openAlbumId!!) != null -> "album:$openAlbumId"
@@ -338,7 +343,8 @@ private fun App(vm: MainViewModel = viewModel()) {
                 transitionSpec = {
                     when {
                         // Las salidas del reproductor ya tienen su propia animación (gestos)
-                        initialState == "player" || initialState == "queue" || targetState == "queue" ->
+                        initialState == "player" || initialState == "queue" || targetState == "queue" ||
+                            (initialState == "eq" && targetState == "player") ->
                             EnterTransition.None togetherWith ExitTransition.None
                         // El reproductor sube suave, sin rebote
                         targetState == "player" ->
@@ -362,6 +368,7 @@ private fun App(vm: MainViewModel = viewModel()) {
                   ) {
                     when {
                         s == "folders" -> FoldersScreen(vm) { showFolders = false }
+                        s == "eq" -> EqualizerScreen { showEq = false }
                         s == "queue" -> QueueScreen(vm) { showQueue = false }
                         s == "player" -> Box(Modifier.fillMaxSize()) {
                             // Al deslizar hacia abajo, debajo aparece el disco actual, de borroso a nítido
@@ -382,6 +389,7 @@ private fun App(vm: MainViewModel = viewModel()) {
                                 vm,
                                 onArtist = { miniFromPlayer = true; goArtist(it) },
                                 onQueue = { showQueue = true },
+                                onEqualizer = { showEq = true },
                                 onAlbum = { miniFromPlayer = true; openAlbumId = it; showPlayer = false },
                                 onHome = {
                                     miniFromPlayer = true
@@ -437,6 +445,7 @@ private fun App(vm: MainViewModel = viewModel()) {
                             onQueue = { showQueue = true },
                             onSearch = { showSearch = true },
                             onSettings = { showFolders = true },
+                            onEqualizer = { showEq = true },
                         )
                     }
                   }
@@ -708,6 +717,7 @@ private fun LibraryHome(
     onQueue: () -> Unit,
     onSearch: () -> Unit,
     onSettings: () -> Unit,
+    onEqualizer: () -> Unit,
 ) {
     val favCount = vm.favorites?.let { vm.songsOf(it).size } ?: 0
     val categories = buildList {
@@ -719,6 +729,7 @@ private fun LibraryHome(
         add(Category("Favoritas", Icons.Filled.Favorite, "$favCount", onFavorites))
         add(Category("Añadidos recientemente", Icons.Filled.Schedule, null, onRecent))
         if (vm.currentItem != null) add(Category("Cola de reproducción", Icons.AutoMirrored.Filled.PlaylistPlay, null, onQueue))
+        add(Category("Ecualizador", Icons.Filled.Equalizer, if (EqSettings.enabled) EqSettings.preset else "Apagado", onEqualizer))
     }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp)) {
         item {
@@ -2033,6 +2044,7 @@ private fun PlayerScreen(
     vm: MainViewModel,
     onArtist: (String) -> Unit,
     onQueue: () -> Unit,
+    onEqualizer: () -> Unit,
     onAlbum: (Long) -> Unit,
     onHome: () -> Unit,
     onReveal: (Float) -> Unit,
@@ -2147,6 +2159,12 @@ private fun PlayerScreen(
                 if (queuePos != null) Text(queuePos, fontSize = 12.sp, color = White.copy(alpha = 0.8f))
             }
             Spacer(Modifier.weight(1f))
+            IconButton(onClick = onEqualizer) {
+                Icon(
+                    Icons.Filled.Equalizer, "Ecualizador", Modifier.size(24.dp),
+                    tint = if (EqSettings.enabled) White else Gray,
+                )
+            }
             IconButton(onClick = onQueue) {
                 Icon(Icons.AutoMirrored.Filled.QueueMusic, "Ver cola", Modifier.size(26.dp))
             }
@@ -2325,6 +2343,185 @@ private fun PlayerScreen(
         Spacer(Modifier.weight(0.6f))
     }
   }
+}
+
+// ---------------------------------------------------------------- Ecualizador
+
+@Composable
+private fun EqualizerScreen(onBack: () -> Unit) {
+    val context = LocalContext.current
+    LaunchedEffect(Unit) { EqSettings.load(context) }
+    var enabled by remember { mutableStateOf(EqSettings.enabled) }
+    var preamp by remember { mutableFloatStateOf(EqSettings.preamp) }
+    var preset by remember { mutableStateOf(EqSettings.preset) }
+    val gains = remember { mutableStateListOf(*EqSettings.gains.toTypedArray()) }
+    fun save() = EqSettings.update(context, enabled, preamp, gains.toFloatArray(), preset)
+    val dim by animateFloatAsState(if (enabled) 1f else 0.4f, tween(200), label = "eqActivo")
+
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp)
+    ) {
+        BackButton(onBack)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Ecualizador", style = MaterialTheme.typography.headlineSmall)
+                Text(if (enabled) preset else "Apagado", color = Gray, fontSize = 13.sp)
+            }
+            Switch(
+                checked = enabled,
+                onCheckedChange = { enabled = it; save() },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Black, checkedTrackColor = White,
+                    uncheckedThumbColor = Gray, uncheckedTrackColor = Surface2, uncheckedBorderColor = DarkGray,
+                ),
+            )
+        }
+        Spacer(Modifier.height(20.dp))
+
+        // Curva de respuesta
+        Box(SectionCard.graphicsLayer { alpha = dim }) {
+            EqCurve(gains, Modifier.fillMaxWidth().height(110.dp))
+        }
+        Spacer(Modifier.height(16.dp))
+
+        // Presets
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            EqSettings.PRESETS.forEach { (name, values) ->
+                val selected = name == preset
+                Box(
+                    Modifier.height(34.dp).clip(CircleShape)
+                        .background(if (selected) White else Surface2)
+                        .border(1.dp, if (selected) White else Line, CircleShape)
+                        .bouncyClick(0.92f) {
+                            values.forEachIndexed { i, v -> gains[i] = v }
+                            // Algo de margen para que los realces no saturen
+                            preamp = -(values.maxOrNull() ?: 0f).coerceAtLeast(0f) / 2f
+                            preset = name
+                            enabled = true
+                            save()
+                        }
+                        .padding(horizontal = 14.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(name, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = if (selected) Black else White)
+                }
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+
+        // Bandas
+        Column(SectionCard.graphicsLayer { alpha = dim }) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                for (i in 0 until EqSettings.BANDS) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        val g = gains[i]
+                        Text(
+                            (if (g > 0) "+" else "") + if (g % 1f == 0f) g.toInt().toString() else "%.1f".format(g),
+                            fontSize = 10.sp, color = if (g == 0f) Gray else White, fontWeight = FontWeight.SemiBold,
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        BandSlider(g) { v ->
+                            gains[i] = v
+                            preset = "Personalizado"
+                            if (!enabled) enabled = true
+                            save()
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        Text(freqLabel(EqSettings.FREQS[i]), fontSize = 10.sp, color = Gray)
+                    }
+                }
+            }
+            HorizontalDivider(Modifier.padding(vertical = 16.dp), color = Line)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Preamplificador", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Text("%+.1f dB".format(preamp), fontSize = 13.sp, color = Gray)
+            }
+            Slider(
+                value = preamp,
+                onValueChange = { preamp = (it * 2).roundToInt() / 2f },
+                onValueChangeFinished = { save() },
+                valueRange = -EqSettings.MAX_DB..EqSettings.MAX_DB,
+                colors = SliderDefaults.colors(thumbColor = White, activeTrackColor = White, inactiveTrackColor = Line),
+            )
+        }
+        Spacer(Modifier.height(16.dp))
+        Pill("Restablecer", Icons.Filled.Refresh) {
+            for (i in 0 until EqSettings.BANDS) gains[i] = 0f
+            preamp = 0f
+            preset = "Plano"
+            save()
+        }
+        Spacer(Modifier.height(12.dp))
+        Text(
+            "Arrastra cada barra para subir o bajar esa frecuencia; doble toque la deja a 0. " +
+                "Si el sonido se distorsiona al subir mucho, baja el preamplificador.",
+            color = Gray, fontSize = 12.sp,
+        )
+    }
+}
+
+private fun freqLabel(f: Float) = if (f >= 1000f) "${(f / 1000f).let { if (it % 1f == 0f) it.toInt().toString() else it.toString() }}k" else f.toInt().toString()
+
+/** Deslizador vertical de una banda (-12…+12 dB). */
+@Composable
+private fun BandSlider(value: Float, onChange: (Float) -> Unit) {
+    val current by rememberUpdatedState(onChange)
+    val max = EqSettings.MAX_DB
+    fun toGain(y: Float, h: Float) = (((1f - y / h) * 2f * max - max) * 2f).roundToInt() / 2f
+    val shown by animateFloatAsState(value, spring(dampingRatio = 0.7f, stiffness = 900f), label = "banda")
+    Canvas(
+        Modifier.width(26.dp).height(190.dp)
+            .pointerInput(Unit) { detectTapGestures(onDoubleTap = { current(0f) }) }
+            .pointerInput(Unit) {
+                detectVerticalDragGestures(
+                    onDragStart = { o -> current(toGain(o.y, size.height.toFloat()).coerceIn(-max, max)) },
+                ) { change, _ ->
+                    change.consume()
+                    current(toGain(change.position.y, size.height.toFloat()).coerceIn(-max, max))
+                }
+            }
+    ) {
+        val cx = size.width / 2
+        val pad = 8.dp.toPx()
+        val top = pad
+        val bottom = size.height - pad
+        fun yOf(g: Float) = top + (bottom - top) * (1f - (g + max) / (2 * max))
+        val stroke = 4.dp.toPx()
+        drawLine(Line, Offset(cx, top), Offset(cx, bottom), stroke, StrokeCap.Round)
+        drawLine(DarkGray, Offset(cx - 6.dp.toPx(), yOf(0f)), Offset(cx + 6.dp.toPx(), yOf(0f)), 1.dp.toPx())
+        val y = yOf(shown)
+        drawLine(White, Offset(cx, yOf(0f)), Offset(cx, y), stroke, StrokeCap.Round)
+        drawCircle(White, 9.dp.toPx(), Offset(cx, y))
+        drawCircle(Black, 3.dp.toPx(), Offset(cx, y))
+    }
+}
+
+/** Curva aproximada del ecualizador: una línea suave que pasa por las bandas. */
+@Composable
+private fun EqCurve(gains: List<Float>, modifier: Modifier) {
+    val animated = gains.map { animateFloatAsState(it, spring(dampingRatio = 0.7f, stiffness = 400f), label = "curva").value }
+    Canvas(modifier) {
+        val max = EqSettings.MAX_DB
+        val n = animated.size
+        fun x(i: Int) = size.width * i / (n - 1)
+        fun y(g: Float) = size.height * (1f - (g + max) / (2 * max))
+        drawLine(Line, Offset(0f, y(0f)), Offset(size.width, y(0f)), 1.dp.toPx())
+        val path = androidx.compose.ui.graphics.Path()
+        path.moveTo(x(0), y(animated[0]))
+        for (i in 1 until n) {
+            val px = x(i - 1)
+            val cx = (px + x(i)) / 2
+            path.cubicTo(cx, y(animated[i - 1]), cx, y(animated[i]), x(i), y(animated[i]))
+        }
+        val fill = androidx.compose.ui.graphics.Path().apply {
+            addPath(path)
+            lineTo(size.width, size.height)
+            lineTo(0f, size.height)
+            close()
+        }
+        drawPath(fill, Brush.verticalGradient(listOf(White.copy(alpha = 0.18f), Color.Transparent)))
+        drawPath(path, White, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round))
+    }
 }
 
 /** Barra de progreso con la forma de onda real de la canción: tocar o arrastrar para moverse. */
