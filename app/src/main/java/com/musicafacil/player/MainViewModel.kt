@@ -376,6 +376,30 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         android.widget.Toast.makeText(getApplication(), msg, android.widget.Toast.LENGTH_LONG).show()
 
     /** Cambios de archivo para renombrar un artista: solo en las etiquetas que tenían ese artista. */
+    // --- Solo el artista principal (sin "feat.") ---
+
+    var stripFeat by mutableStateOf(Feat.enabled(app))
+        private set
+
+    fun changeStripFeat(enabled: Boolean) {
+        stripFeat = enabled
+        getApplication<Application>().getSharedPreferences("settings", android.content.Context.MODE_PRIVATE)
+            .edit().putBoolean("strip_feat", enabled).apply()
+        reloadLibrary()
+    }
+
+    /** FLAC cuyas etiquetas aún llevan "feat." en el archivo. */
+    val featFlacCount: Int get() = rawSongs.count { it.featStripped && it.isFlac }
+
+    /** Escribe en los FLAC el artista y el título ya sin "feat." (pide permiso a Android). */
+    fun writeFeatCleanToFiles() {
+        requestFileWrite(
+            rawSongs.filter { it.featStripped && it.isFlac }.associate {
+                it.id to FlacTagWriter.Changes(title = it.title, artist = it.artist, albumArtist = it.albumArtist)
+            }
+        )
+    }
+
     fun artistFileChanges(artist: Artist, newName: String): Map<Long, FlacTagWriter.Changes> {
         val key = artistKey(artist.name)
         val name = newName.trim()

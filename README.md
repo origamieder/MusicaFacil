@@ -9,6 +9,7 @@ Reproductor de música para Android, minimalista en blanco y negro. Pensado para
 - **Canciones**: lista de todas las canciones por orden alfabético.
 - **Favoritas**: toca ♡ en el reproductor o "Añadir a favoritas" en el menú ⋮ de cualquier canción.
 - **Al acabar un disco**: con la app abierta, pregunta si quieres otro disco al azar del mismo artista o elegir otro artista. Con la app cerrada o en segundo plano, sigue sola con otro disco del mismo artista.
+- **Solo el artista principal**: se quita "feat." / "ft." / "featuring" del artista y del título (se puede desactivar en Ajustes y escribir también en los FLAC).
 - **Ecualizador de 10 bandas** (31 Hz – 16 kHz, ±12 dB) con preamplificador y presets; se aplica dentro del reproductor, igual en cualquier móvil.
 - **Gestos en el reproductor**: desliza ← siguiente, → anterior, ↓ abre el álbum (la portada vuela al mini reproductor), ↑ vuelve a la pantalla principal.
 - **Portadas de internet**: si un disco no tiene portada, se busca en iTunes y Deezer y se guarda en el móvil (se puede desactivar en Ajustes; en el menú ⋮ de un álbum puedes forzar la búsqueda).

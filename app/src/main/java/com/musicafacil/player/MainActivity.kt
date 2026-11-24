@@ -2667,6 +2667,20 @@ private fun FoldersScreen(vm: MainViewModel, onBack: () -> Unit) {
                 color = DarkGray, fontSize = 13.sp,
             )
             Spacer(Modifier.height(32.dp))
+            SectionHeader("Artistas", null)
+            Column(SectionCard) {
+                SettingSwitch(
+                    "Solo el artista principal",
+                    "Quita \"feat.\", \"ft.\" y \"featuring\" del artista y del título (Calvin Harris feat. Rihanna → Calvin Harris). No toca \"&\" ni comas, que forman parte del nombre de muchos grupos.",
+                    vm.stripFeat, vm::changeStripFeat,
+                )
+                val pending = vm.featFlacCount
+                if (vm.stripFeat && pending > 0 && vm.canWriteFiles) {
+                    Spacer(Modifier.height(12.dp))
+                    Pill("Quitarlo también de los archivos FLAC ($pending)", Icons.Filled.Edit) { vm.writeFeatCleanToFiles() }
+                }
+            }
+            Spacer(Modifier.height(32.dp))
             SectionHeader("Internet", null)
             Column(SectionCard) {
                 SettingSwitch(

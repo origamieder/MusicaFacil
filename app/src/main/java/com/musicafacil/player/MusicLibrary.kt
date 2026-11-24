@@ -29,6 +29,8 @@ data class Song(
     val yearEdited: Boolean = false,
     /** Cuándo se añadió el archivo al móvil (segundos), para "Añadidos recientemente". */
     val added: Long = 0,
+    /** Se le quitó un "feat." al artista o al título (para poder escribirlo también en el archivo). */
+    val featStripped: Boolean = false,
 ) {
     val uri: Uri get() = songUri(id)
     val isFlac: Boolean get() = path?.endsWith(".flac", ignoreCase = true) == true
@@ -147,7 +149,8 @@ object MusicLibrary {
             }
         }
         // Repara tildes y eñes mal leídas ("TRÃ‰" -> "TRÉ")
-        return songs.map { TextFix.fix(context, it) }
+        val stripFeat = Feat.enabled(context)
+        return songs.map { TextFix.fix(context, it) }.map { if (stripFeat) Feat.clean(it) else it }
     }
 
     /** @param years años leídos de los archivos ([AlbumYears]); mandan sobre los de Android */
